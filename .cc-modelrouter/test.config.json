@@ -1,0 +1,20 @@
+{
+  "server": {
+    "port": 18081,
+    "host": "localhost"
+  },
+  "providers": {
+    "bigmodel": {
+      "apiKey": "${BIGMODEL_API_KEY}",
+      "baseURL": "https://open.bigmodel.cn/api/anthropic",
+      "models": ["glm-4.7"]
+    }
+  },
+  "router": {
+    "routes": {
+      "default": "bigmodel:glm-4.7"
+    },
+    "maxRetries": 1,
+    "retryDelay": "500ms"
+  }
+}
