@@ -1,0 +1,29 @@
+# Sessions (local only)
+/.sessions/
+
+# Binaries
+/ccrouter
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output
+/bin/
+
+# Go workspace
+go.work
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Instance files
+~/.cc-modelrouter/instances/
