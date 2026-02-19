@@ -29,11 +29,13 @@ func Defaults() *ServerConfig {
 
 // Server is the HTTP proxy server.
 type Server struct {
-	config  *ServerConfig
-	server  *http.Server
-	handler *Handler
-	mu      sync.Mutex
-	running bool
+	config       *ServerConfig
+	server       *http.Server
+	handler      *Handler
+	usageTracker UsageTracker
+	instanceID   string
+	mu           sync.Mutex
+	running      bool
 }
 
 // NewServer creates a new proxy server.
@@ -73,6 +75,18 @@ func (s *Server) SetConfig(cfg *config.Config) {
 	s.handler.SetConfig(cfg)
 }
 
+// SetUsageTracker sets the usage tracker.
+func (s *Server) SetUsageTracker(tracker UsageTracker) {
+	s.usageTracker = tracker
+	s.handler.SetUsageTracker(tracker)
+}
+
+// SetInstanceID sets the instance ID.
+func (s *Server) SetInstanceID(id string) {
+	s.instanceID = id
+	s.handler.SetInstanceID(id)
+}
+
 // Start starts the server.
 func (s *Server) Start() error {
 	s.mu.Lock()
@@ -108,6 +122,11 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	if !s.running || s.server == nil {
 		return nil
+	}
+
+	// Shutdown tracker if it exists
+	if shutdowner, ok := s.usageTracker.(interface{ Shutdown() }); ok {
+		shutdowner.Shutdown()
 	}
 
 	err := s.server.Shutdown(ctx)

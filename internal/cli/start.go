@@ -14,6 +14,7 @@ import (
 	"github.com/iimmutable/cc-modelrouter/internal/proxy"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
+	"github.com/iimmutable/cc-modelrouter/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -114,6 +115,21 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	server.SetProviderClients(clients)
 	server.SetConfig(cfg)
+
+	// Initialize usage tracker
+	dbPath, err := usage.DBPath()
+	if err != nil {
+		return fmt.Errorf("failed to get db path: %w", err)
+	}
+
+	usageDB, err := usage.InitDB(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to init usage db: %w", err)
+	}
+
+	tracker := usage.NewTracker(usageDB, usage.DefaultBufferSize, usage.DefaultFlushTimeout)
+	server.SetUsageTracker(tracker)
+	server.SetInstanceID(instanceID)
 
 	// Start server
 	if err := server.Start(); err != nil {

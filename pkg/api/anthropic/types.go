@@ -22,6 +22,13 @@ type Request struct {
 	ToolChoice any             `json:"tool_choice,omitempty"`
 	Metadata   map[string]any  `json:"metadata,omitempty"`
 	Stream     bool            `json:"stream,omitempty"`
+	Thinking   *ThinkingConfig `json:"thinking,omitempty"`
+}
+
+// ThinkingConfig represents the thinking configuration for extended thinking.
+type ThinkingConfig struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
 // Message represents a single message in the conversation.

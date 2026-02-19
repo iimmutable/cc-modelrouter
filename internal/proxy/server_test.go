@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/iimmutable/cc-modelrouter/internal/router"
+	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
 func TestNewServer(t *testing.T) {
@@ -169,5 +172,133 @@ func TestNewHandler(t *testing.T) {
 	}
 	if handler.providerClients == nil {
 		t.Error("expected providerClients map to be initialized")
+	}
+}
+
+func TestIsBackground(t *testing.T) {
+	handler := NewHandler(50 * 1024 * 1024)
+
+	tests := []struct {
+		name     string
+		model    string
+		expected bool
+	}{
+		{"claude-3-5-haiku-20241022", "claude-3-5-haiku-20241022", true},
+		{"claude-3-5-haiku-latest", "claude-3-5-haiku-latest", true},
+		{"claude-haiku-4-20250514", "claude-haiku-4-20250514", true},
+		{"claude-sonnet-4-20250514", "claude-sonnet-4-20250514", false},
+		{"claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20241022", false},
+		{"claude-opus-4-20250514", "claude-opus-4-20250514", false},
+		{"gpt-4o", "gpt-4o", false},
+		{"deepseek-chat", "deepseek-chat", false},
+		{"Haiku", "Haiku", false}, // Must contain "claude" and "haiku"
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &anthropic.Request{Model: tt.model}
+			result := handler.isBackground(req)
+			if result != tt.expected {
+				t.Errorf("isBackground(%s) = %v, expected %v", tt.model, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetThinkLevel(t *testing.T) {
+	handler := NewHandler(50 * 1024 * 1024)
+
+	tests := []struct {
+		name     string
+		thinking *anthropic.ThinkingConfig
+		expected router.ThinkLevel
+	}{
+		{"nil thinking", nil, router.ThinkNone},
+		{"thinking with budget 0", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 0}, router.ThinkNone},
+		{"thinking with budget 1000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 1000}, router.ThinkBasic},
+		{"thinking with budget 4000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 4000}, router.ThinkBasic},
+		{"thinking with budget 5000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 5000}, router.ThinkBasic}, // < 10000
+		{"thinking with budget 10000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 10000}, router.ThinkMiddle},
+		{"thinking with budget 20000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 20000}, router.ThinkMiddle}, // < 32000
+		{"thinking with budget 32000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 32000}, router.ThinkHighest},
+		{"thinking with budget 50000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 50000}, router.ThinkHighest},
+		{"thinking with budget 1", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 1}, router.ThinkBasic}, // Any non-zero is basic
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &anthropic.Request{Thinking: tt.thinking}
+			result := handler.getThinkLevel(req)
+			if result != tt.expected {
+				t.Errorf("getThinkLevel() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestHasWebSearch(t *testing.T) {
+	handler := NewHandler(50 * 1024 * 1024)
+
+	tests := []struct {
+		name     string
+		tools    []anthropic.Tool
+		expected bool
+	}{
+		{"no tools", nil, false},
+		{"empty tools", []anthropic.Tool{}, false},
+		{"web_search tool", []anthropic.Tool{{Name: "web_search"}}, true},
+		{"WebSearch tool", []anthropic.Tool{{Name: "WebSearch"}}, true},
+		{"search tool", []anthropic.Tool{{Name: "search_files"}}, true},
+		{"web tool", []anthropic.Tool{{Name: "web_fetch"}}, true},
+		{"unrelated tool", []anthropic.Tool{{Name: "read_file"}}, false},
+		{"multiple tools with web", []anthropic.Tool{{Name: "read_file"}, {Name: "web_search"}}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &anthropic.Request{Tools: tt.tools}
+			result := handler.hasWebSearch(req)
+			if result != tt.expected {
+				t.Errorf("hasWebSearch() = %v, expected %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestHasImages(t *testing.T) {
+	handler := NewHandler(50 * 1024 * 1024)
+
+	tests := []struct {
+		name     string
+		messages []anthropic.Message
+		expected bool
+	}{
+		{"no messages", nil, false},
+		{"text only", []anthropic.Message{
+			{Content: []anthropic.ContentBlock{{Type: "text", Text: "hello"}}},
+		}, false},
+		{"image content", []anthropic.Message{
+			{Content: []anthropic.ContentBlock{{Type: "image"}}},
+		}, true},
+		{"mixed content", []anthropic.Message{
+			{Content: []anthropic.ContentBlock{
+				{Type: "text", Text: "hello"},
+				{Type: "image"},
+			}},
+		}, true},
+		{"image in second message", []anthropic.Message{
+			{Content: []anthropic.ContentBlock{{Type: "text", Text: "hello"}}},
+			{Content: []anthropic.ContentBlock{{Type: "image"}}},
+		}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &anthropic.Request{Messages: tt.messages}
+			result := handler.hasImages(req)
+			if result != tt.expected {
+				t.Errorf("hasImages() = %v, expected %v", result, tt.expected)
+			}
+		})
 	}
 }

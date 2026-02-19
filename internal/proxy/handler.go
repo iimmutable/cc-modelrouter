@@ -9,12 +9,13 @@ import (
 	"strings"
 
 	"github.com/iimmutable/cc-modelrouter/internal/config"
+	"github.com/iimmutable/cc-modelrouter/internal/router"
 	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
 // Router interface for handler dependency.
 type Router interface {
-	DetectRoute(req RouteRequest) string
+	DetectRoute(req router.RouteRequest) string
 	GetTargets(routeName string) []config.RouteTarget
 }
 
@@ -37,13 +38,9 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// RouteRequest for route detection.
-type RouteRequest struct {
-	IsBackground bool
-	IsThink      bool
-	TokenCount   int
-	HasWebSearch bool
-	HasImages    bool
+// UsageTracker interface for tracking usage statistics.
+type UsageTracker interface {
+	Record(instanceID, route, model string, tokens, fallbacks int)
 }
 
 // Handler handles HTTP requests.
@@ -53,6 +50,8 @@ type Handler struct {
 	transformerRegistry TransformerRegistry
 	providerClients     map[string]HTTPClient
 	config              *config.Config
+	usageTracker        UsageTracker
+	instanceID          string
 }
 
 // NewHandler creates a new handler.
@@ -81,6 +80,16 @@ func (h *Handler) SetProviderClients(clients map[string]HTTPClient) {
 // SetConfig sets the configuration.
 func (h *Handler) SetConfig(cfg *config.Config) {
 	h.config = cfg
+}
+
+// SetUsageTracker sets the usage tracker.
+func (h *Handler) SetUsageTracker(tracker UsageTracker) {
+	h.usageTracker = tracker
+}
+
+// SetInstanceID sets the instance ID.
+func (h *Handler) SetInstanceID(id string) {
+	h.instanceID = id
 }
 
 // ServeHTTP handles HTTP requests.
@@ -112,7 +121,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // handleMessages processes the messages request.
 func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request, req *anthropic.Request) {
 	// Detect route
-	routeReq := RouteRequest{
+	routeReq := router.RouteRequest{
+		IsBackground: h.isBackground(req),
+		ThinkLevel:   h.getThinkLevel(req),
 		TokenCount:   h.estimateTokens(req),
 		HasWebSearch: h.hasWebSearch(req),
 		HasImages:    h.hasImages(req),
@@ -121,10 +132,21 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request, req *an
 	targets := h.router.GetTargets(routeName)
 
 	// Try each target with failover
-	for _, target := range targets {
+	var fallbackCount int
+	var successfulModel string
+
+	for i, target := range targets {
 		resp, err := h.tryTarget(r.Context(), req, target)
 		if err != nil {
+			fallbackCount = i
 			continue
+		}
+
+		successfulModel = target.Model
+
+		// Track usage
+		if h.usageTracker != nil {
+			h.usageTracker.Record(h.instanceID, routeName, successfulModel, h.estimateTokens(req), fallbackCount)
 		}
 
 		// Write response
@@ -208,4 +230,31 @@ func (h *Handler) hasImages(req *anthropic.Request) bool {
 		}
 	}
 	return false
+}
+
+// isBackground detects if this is a background agent request.
+// Claude Code uses Haiku models for background agents.
+func (h *Handler) isBackground(req *anthropic.Request) bool {
+	model := strings.ToLower(req.Model)
+	return strings.Contains(model, "claude") && strings.Contains(model, "haiku")
+}
+
+// getThinkLevel detects the thinking level based on budget_tokens.
+// Levels: NONE (0), BASIC (~4K), MIDDLE (~10K), HIGHEST (~32K)
+func (h *Handler) getThinkLevel(req *anthropic.Request) router.ThinkLevel {
+	if req.Thinking == nil || req.Thinking.BudgetTokens <= 0 {
+		return router.ThinkNone
+	}
+
+	budget := req.Thinking.BudgetTokens
+	switch {
+	case budget >= router.ThinkLevelHighest:
+		return router.ThinkHighest
+	case budget >= router.ThinkLevelMiddle:
+		return router.ThinkMiddle
+	case budget >= router.ThinkLevelBasic:
+		return router.ThinkBasic
+	default:
+		return router.ThinkBasic // Any non-zero budget is at least basic
+	}
 }

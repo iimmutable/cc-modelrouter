@@ -146,7 +146,9 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 			Routes: map[string]string{
 				"default":     "anthropic:claude-sonnet-4-20250514",
 				"background":  "anthropic:claude-sonnet-4-20250514",
-				"think":       "anthropic:claude-opus-4-20250514",
+				"think":       "anthropic:claude-sonnet-4-20250514",
+				"thinkMore":   "anthropic:claude-sonnet-4-20250514",
+				"ultrathink":  "anthropic:claude-opus-4-20250514",
 				"longContext": "anthropic:claude-sonnet-4-20250514",
 			},
 			MaxRetries: 2,

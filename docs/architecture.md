@@ -83,14 +83,31 @@ HTTP server implementing the Anthropic Messages API endpoint.
 Determines which provider and model to use for each request.
 
 **Route Detection:**
-| Route | Trigger Condition |
-|-------|-------------------|
-| `background` | `IsBackground` flag is true |
-| `think` | `IsThink` flag is true |
-| `image` | Request contains images |
-| `webSearch` | `HasWebSearch` flag is true |
-| `longContext` | Token count > 60,000 |
-| `default` | Fallback for all other requests |
+| Route | Trigger Condition | Detection Method |
+|-------|-------------------|------------------|
+| `background` | Background agent | Model contains "claude" + "haiku" |
+| `ultrathink` | Highest thinking | `budget_tokens >= 32,000` |
+| `thinkMore` | Middle thinking | `budget_tokens >= 10,000` |
+| `think` | Basic thinking | `budget_tokens >= 4,000` |
+| `image` | Image content | Request contains image blocks |
+| `webSearch` | Web search enabled | Tool names contain "web"/"search" |
+| `longContext` | Large context | Token count > 60,000 |
+| `default` | Fallback | All other requests |
+
+**Thinking Levels:**
+
+Claude Code converts trigger phrases to numeric `budget_tokens` before sending requests. Our router detects these levels:
+
+| Level | Budget Threshold | Trigger Phrases |
+|-------|-----------------|-----------------|
+| `ThinkNone` | 0 | (no thinking) |
+| `ThinkBasic` | >= 4,000 | "think", "思考" |
+| `ThinkMiddle` | >= 10,000 | "think hard", "think more", "megathink" |
+| `ThinkHighest` | >= 32,000 | "ultrathink", "think harder" |
+
+**Thinking Route Fallback:**
+- `ultrathink` → `thinkMore` → `think` (if not configured)
+- `thinkMore` → `think` (if not configured)
 
 **Failover Strategy:**
 - Sequential: Try each provider:model in order

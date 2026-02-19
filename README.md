@@ -46,6 +46,8 @@ Create `~/.cc-modelrouter/config.json`:
       "default": "openrouter:anthropic/claude-sonnet-4",
       "background": "bigmodel:glm-4.5-air",
       "think": "openrouter:anthropic/claude-sonnet-4",
+      "thinkMore": "openrouter:anthropic/claude-sonnet-4",
+      "ultrathink": "openrouter:anthropic/claude-opus-4",
       "longContext": "openrouter:google/gemini-2.5-pro",
       "webSearch": "openrouter:google/gemini-2.5-pro",
       "image": "bigmodel:glm-4.6v"
@@ -115,14 +117,16 @@ Use `${VAR_NAME}` or `$VAR_NAME` syntax for sensitive values:
 
 ### Route Types
 
-| Route | Trigger |
-|-------|---------|
-| `default` | Standard requests |
-| `background` | Background agent requests |
-| `think` | Plan mode requests |
-| `longContext` | Requests with >60K tokens |
-| `webSearch` | Web search enabled requests |
-| `image` | Image processing requests |
+| Route | Trigger | Detection |
+|-------|---------|-----------|
+| `default` | Standard requests | Fallback |
+| `background` | Background agent | Model contains "claude" + "haiku" |
+| `think` | Basic thinking | `budget_tokens >= 4,000` |
+| `thinkMore` | Enhanced thinking | `budget_tokens >= 10,000` |
+| `ultrathink` | Maximum thinking | `budget_tokens >= 32,000` |
+| `longContext` | Large context | Token count > 60,000 |
+| `webSearch` | Web search enabled | Tool names contain "web"/"search" |
+| `image` | Image processing | Request contains images |
 
 ### Provider Format
 
@@ -209,7 +213,12 @@ go build ./...
 
 ```bash
 go test ./...
+
+# With coverage
+go test ./... -cover
 ```
+
+See [docs/testing.md](docs/testing.md) for detailed testing documentation.
 
 ### Project Structure
 

@@ -162,6 +162,8 @@ Project configuration **completely overrides** global configuration when present
       "default": "openrouter:anthropic/claude-sonnet-4",
       "background": "bigmodel:glm-4.5-air",
       "think": "openrouter:anthropic/claude-sonnet-4",
+      "thinkMore": "openrouter:anthropic/claude-sonnet-4",
+      "ultrathink": "openrouter:anthropic/claude-opus-4",
       "longContext": "gemini:gemini-2.5-pro",
       "webSearch": "gemini:gemini-2.5-pro",
       "image": "bigmodel:glm-4.6v"
@@ -174,14 +176,48 @@ Project configuration **completely overrides** global configuration when present
 
 ### Routes
 
-| Route | Description | Trigger |
-|-------|-------------|---------|
-| `default` | Default fallback | All unmatched requests |
-| `background` | Background tasks | `IsBackground` flag |
-| `think` | Planning/reasoning | `IsThink` flag |
-| `longContext` | Long conversations | Token count > 60,000 |
-| `webSearch` | Web search enabled | `HasWebSearch` flag |
-| `image` | Image processing | Request contains images |
+| Route | Description | Trigger | Detection Method |
+|-------|-------------|---------|------------------|
+| `default` | Default fallback | All unmatched requests | - |
+| `background` | Background tasks | Claude Code background agents | Model contains "claude" + "haiku" |
+| `think` | Basic thinking | "think" trigger phrase | `budget_tokens >= 4,000` |
+| `thinkMore` | Enhanced thinking | "think hard", "think more" | `budget_tokens >= 10,000` |
+| `ultrathink` | Maximum thinking | "ultrathink", "think harder" | `budget_tokens >= 32,000` |
+| `longContext` | Long conversations | Large context | Token count > 60,000 |
+| `webSearch` | Web search enabled | Web search tools | Tool names contain "web"/"search" |
+| `image` | Image processing | Images in request | Request contains image blocks |
+
+### Thinking Levels
+
+Claude Code supports multiple thinking intensity levels. When a user types trigger phrases like "think", "think more", or "ultrathink", Claude Code converts these to specific `budget_tokens` values before sending the API request.
+
+| Level | Budget Tokens | Route | Trigger Phrases |
+|-------|---------------|-------|-----------------|
+| Basic | ~4,000 | `think` | "think", "思考" |
+| Middle | ~10,000 | `thinkMore` | "think hard", "think more", "think deeply", "megathink", "好好想", "多想想" |
+| Highest | ~32,000 | `ultrathink` | "ultrathink", "think harder", "think intensely", "think longer", "仔细思考", "深思" |
+
+**Fallback Behavior:**
+
+The router supports flexible thinking configuration with automatic fallback:
+
+1. **Full 3-tier config:** Configure `think`, `thinkMore`, and `ultrathink` for different models at each level
+2. **2-tier config:** Configure only `think` and `thinkMore` - highest level uses `thinkMore`
+3. **1-tier config:** Configure only `think` - all thinking levels use `think`
+
+Example for cost optimization:
+```json
+{
+  "router": {
+    "routes": {
+      "default": "openrouter:claude-sonnet-4",
+      "think": "openrouter:claude-sonnet-4",
+      "thinkMore": "openrouter:claude-sonnet-4",
+      "ultrathink": "openrouter:claude-opus-4"
+    }
+  }
+}
+```
 
 ### Route Format
 
@@ -267,6 +303,8 @@ export BIGMODEL_API_KEY="..."
       "default": "bigmodel:glm-4.7;openrouter:anthropic/claude-sonnet-4",
       "background": "bigmodel:glm-4.5-air",
       "think": "openrouter:anthropic/claude-sonnet-4",
+      "thinkMore": "openrouter:anthropic/claude-sonnet-4",
+      "ultrathink": "openrouter:anthropic/claude-opus-4",
       "longContext": "gemini:gemini-2.5-pro;openrouter:google/gemini-2.5-pro",
       "webSearch": "gemini:gemini-2.5-pro",
       "image": "bigmodel:glm-4.6v;gemini:gemini-2.5-pro"

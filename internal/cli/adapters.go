@@ -21,15 +21,8 @@ func NewRouterAdapter(engine *router.Engine) *RouterAdapter {
 }
 
 // DetectRoute implements proxy.Router.
-func (a *RouterAdapter) DetectRoute(req proxy.RouteRequest) string {
-	routerReq := router.RouteRequest{
-		IsBackground: req.IsBackground,
-		IsThink:      req.IsThink,
-		TokenCount:   req.TokenCount,
-		HasWebSearch: req.HasWebSearch,
-		HasImages:    req.HasImages,
-	}
-	return a.engine.DetectRoute(routerReq)
+func (a *RouterAdapter) DetectRoute(req router.RouteRequest) string {
+	return a.engine.DetectRoute(req)
 }
 
 // GetTargets implements proxy.Router.
