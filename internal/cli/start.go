@@ -91,8 +91,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	// Setup transformer registry
 	registry := transformer.NewRegistry()
-	registry.Register(&transformer.AnthropicTransformer{})
-	registry.Register(&transformer.OpenRouterTransformer{})
+	registry.Register(transformer.NewAnthropicTransformer())
+	registry.Register(transformer.NewOpenRouterTransformer())
+	registry.Register(transformer.NewGeminiTransformer())
+	registry.Register(transformer.NewQwenTransformer())
+	registry.Register(transformer.NewGLMTransformer())
 	server.SetTransformerRegistry(NewRegistryAdapter(registry))
 
 	// Setup provider clients

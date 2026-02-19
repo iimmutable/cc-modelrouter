@@ -28,7 +28,6 @@ func NewCodeCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringP("config", "c", "", "Path to config file")
-	cmd.Flags().Bool("detach", false, "Run router in background")
 
 	return cmd
 }
@@ -36,7 +35,6 @@ func NewCodeCommand() *cobra.Command {
 func runCode(cmd *cobra.Command, args []string) error {
 	// Get flags
 	configPath, _ := cmd.Flags().GetString("config")
-	detach, _ := cmd.Flags().GetBool("detach")
 
 	// Get working directory
 	projectRoot, err := os.Getwd()
@@ -64,11 +62,6 @@ func runCode(cmd *cobra.Command, args []string) error {
 	instanceID := daemon.GenerateInstanceID()
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 
-	if detach {
-		// Start in background mode
-		return startDetached(cfg, instanceID, configType, configPath, projectRoot)
-	}
-
 	// Start in foreground mode
 	fmt.Printf("Starting router on %s\n", addr)
 
@@ -88,8 +81,11 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 	// Setup transformer registry
 	registry := transformer.NewRegistry()
-	registry.Register(&transformer.AnthropicTransformer{})
-	registry.Register(&transformer.OpenRouterTransformer{})
+	registry.Register(transformer.NewAnthropicTransformer())
+	registry.Register(transformer.NewOpenRouterTransformer())
+	registry.Register(transformer.NewGeminiTransformer())
+	registry.Register(transformer.NewQwenTransformer())
+	registry.Register(transformer.NewGLMTransformer())
 	server.SetTransformerRegistry(NewRegistryAdapter(registry))
 
 	// Setup provider clients
@@ -183,13 +179,4 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("Router stopped")
 	return nil
-}
-
-func startDetached(cfg *config.Config, instanceID, configType, configPath, projectRoot string) error {
-	// For detached mode, we would need to fork the process
-	// For simplicity, we'll just start the server and let it run
-	// In a production system, this would use proper daemonization
-
-	fmt.Println("Detached mode not fully implemented. Use 'start' command instead.")
-	return fmt.Errorf("detached mode requires daemonization support")
 }
