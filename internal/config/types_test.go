@@ -37,3 +37,95 @@ func TestRouteParsing(t *testing.T) {
 		t.Errorf("unexpected second target: %+v", targets[1])
 	}
 }
+
+func TestLoggingConfigMethods(t *testing.T) {
+	tests := []struct {
+		name          string
+		cfg           LoggingConfig
+		wantEnabled   bool
+		wantLevel     LogLevel
+	}{
+		{
+			name: "with debug level",
+			cfg: LoggingConfig{
+				Enabled: true,
+				Level:   "debug",
+			},
+			wantEnabled: true,
+			wantLevel:   LevelDebug,
+		},
+		{
+			name: "disabled logging",
+			cfg: LoggingConfig{
+				Enabled: false,
+			},
+			wantEnabled: false,
+			wantLevel:   LevelInfo,
+		},
+		{
+			name: "with info level",
+			cfg: LoggingConfig{
+				Enabled: true,
+				Level:   "info",
+			},
+			wantEnabled: true,
+			wantLevel:   LevelInfo,
+		},
+		{
+			name: "with warn level",
+			cfg: LoggingConfig{
+				Enabled: true,
+				Level:   "warn",
+			},
+			wantEnabled: true,
+			wantLevel:   LevelWarn,
+		},
+		{
+			name: "with error level",
+			cfg: LoggingConfig{
+				Enabled: true,
+				Level:   "error",
+			},
+			wantEnabled: true,
+			wantLevel:   LevelError,
+		},
+		{
+			name: "empty level defaults to info",
+			cfg: LoggingConfig{
+				Enabled: true,
+				Level:   "",
+			},
+			wantEnabled: true,
+			wantLevel:   LevelInfo,
+		},
+		{
+			name: "case insensitive parsing",
+			cfg: LoggingConfig{
+				Enabled: true,
+				Level:   "DEBUG",
+			},
+			wantEnabled: true,
+			wantLevel:   LevelDebug,
+		},
+		{
+			name: "whitespace handling",
+			cfg: LoggingConfig{
+				Enabled: true,
+				Level:   " info ",
+			},
+			wantEnabled: true,
+			wantLevel:   LevelInfo,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.IsEnabled(); got != tt.wantEnabled {
+				t.Errorf("IsEnabled() = %v, want %v", got, tt.wantEnabled)
+			}
+			if got := tt.cfg.GetLevel(); got != tt.wantLevel {
+				t.Errorf("GetLevel() = %v, want %v", got, tt.wantLevel)
+			}
+		})
+	}
+}

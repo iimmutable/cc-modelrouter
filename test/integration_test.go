@@ -8,14 +8,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/iimmutable/cc-modelrouter/internal/config"
 	"github.com/iimmutable/cc-modelrouter/internal/provider"
 	"github.com/iimmutable/cc-modelrouter/internal/proxy"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
-	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
+	"github.com/iimmutable/cc-modelrouter/internal/usage"
 )
 
 // routerAdapter adapts router.Engine to proxy.Router interface
@@ -23,43 +25,12 @@ type routerAdapter struct {
 	engine *router.Engine
 }
 
-func (a *routerAdapter) DetectRoute(req proxy.RouteRequest) string {
-	return a.engine.DetectRoute(router.RouteRequest{
-		IsBackground: req.IsBackground,
-		IsThink:      req.IsThink,
-		TokenCount:   req.TokenCount,
-		HasWebSearch: req.HasWebSearch,
-		HasImages:    req.HasImages,
-	})
+func (a *routerAdapter) DetectRoute(req router.RouteRequest) string {
+	return a.engine.DetectRoute(req)
 }
 
 func (a *routerAdapter) GetTargets(routeName string) []config.RouteTarget {
 	return a.engine.GetTargets(routeName)
-}
-
-// transformerAdapter adapts transformer.Transformer to proxy.Transformer interface
-type transformerAdapter struct {
-	t transformer.Transformer
-}
-
-func (a *transformerAdapter) Name() string {
-	return a.t.Name()
-}
-
-func (a *transformerAdapter) TransformRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
-	return a.t.TransformRequest(req, baseURL, apiKey, model)
-}
-
-func (a *transformerAdapter) TransformResponse(resp *http.Response) (*anthropic.Response, error) {
-	return a.t.TransformResponse(resp)
-}
-
-func (a *transformerAdapter) SupportsStreaming() bool {
-	return a.t.SupportsStreaming()
-}
-
-func (a *transformerAdapter) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
-	return a.t.TransformStreamChunk(chunk, eventType)
 }
 
 // registryAdapter adapts transformer.Registry to proxy.TransformerRegistry interface
@@ -67,12 +38,31 @@ type registryAdapter struct {
 	registry *transformer.Registry
 }
 
-func (a *registryAdapter) Get(name string) (proxy.Transformer, error) {
-	t, err := a.registry.Get(name)
-	if err != nil {
-		return nil, err
-	}
-	return &transformerAdapter{t: t}, nil
+func (a *registryAdapter) Get(name string) (transformer.Transformer, error) {
+	return a.registry.Get(name)
+}
+
+// mockTracker records to a slice for testing
+type mockTracker struct {
+	records []*usage.Record
+	mu      sync.Mutex
+}
+
+func (m *mockTracker) Record(instanceID, route, model string, tokens, fallbacks int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.records = append(m.records, &usage.Record{
+		InstanceID: instanceID,
+		Route:      route,
+		Model:      model,
+		Tokens:     tokens,
+		Fallbacks:  fallbacks,
+		Timestamp:  time.Now(),
+	})
+}
+
+func (m *mockTracker) Shutdown() {
+	// No-op for mock tracker
 }
 
 func TestIntegrationBasicRequest(t *testing.T) {
@@ -97,12 +87,17 @@ func TestIntegrationBasicRequest(t *testing.T) {
 
 	routerEngine := router.NewEngine(cfg)
 
+	// Create mock usage tracker for testing
+	tracker := &mockTracker{records: make([]*usage.Record, 0)}
+
 	// Create handler with adapters
 	handler := proxy.NewHandler(50 * 1024 * 1024)
 	handler.SetRouter(&routerAdapter{engine: routerEngine})
 	handler.SetTransformerRegistry(&registryAdapter{registry: registry})
 	handler.SetProviderClients(clients)
 	handler.SetConfig(cfg)
+	handler.SetUsageTracker(tracker)
+	handler.SetInstanceID("test-inst")
 
 	// Create test request
 	reqBody := map[string]any{
@@ -126,4 +121,30 @@ func TestIntegrationBasicRequest(t *testing.T) {
 		t.Logf("Response: %s", w.Body.String())
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
+
+	// Verify usage was tracked
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+
+	if len(tracker.records) != 1 {
+		t.Errorf("Expected 1 usage record, got %d", len(tracker.records))
+		return
+	}
+
+	record := tracker.records[0]
+	if record.Route == "" {
+		t.Error("Route should not be empty")
+	}
+	if record.Model == "" {
+		t.Error("Model should not be empty")
+	}
+	if record.Tokens <= 0 {
+		t.Errorf("Tokens should be > 0, got %d", record.Tokens)
+	}
+	if record.InstanceID != "test-inst" {
+		t.Errorf("InstanceID should be 'test-inst', got '%s'", record.InstanceID)
+	}
+
+	t.Logf("Usage tracking verified: route=%s, model=%s, tokens=%d",
+		record.Route, record.Model, record.Tokens)
 }

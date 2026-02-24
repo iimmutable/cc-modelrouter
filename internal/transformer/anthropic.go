@@ -66,7 +66,14 @@ func (t *AnthropicTransformer) SupportsStreaming() bool {
 	return true
 }
 
+// TransformSSEEvent passes through Anthropic events unchanged.
+// This ensures Anthropic-to-Anthropic routing works correctly.
+func (t *AnthropicTransformer) TransformSSEEvent(event *SSEEvent) ([]SSEEvent, error) {
+	return []SSEEvent{*event}, nil
+}
+
 // TransformStreamChunk passes through the chunk unchanged.
+// Deprecated: Use TransformSSEEvent for proper SSE event handling.
 func (t *AnthropicTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
 	return chunk, nil
 }

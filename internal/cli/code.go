@@ -2,15 +2,18 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/iimmutable/cc-modelrouter/internal/config"
 	"github.com/iimmutable/cc-modelrouter/internal/daemon"
+	"github.com/iimmutable/cc-modelrouter/internal/logging"
 	"github.com/iimmutable/cc-modelrouter/internal/provider"
 	"github.com/iimmutable/cc-modelrouter/internal/proxy"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
@@ -23,11 +26,41 @@ func NewCodeCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "code",
 		Short: "Start router and launch Claude Code",
-		Long:  "Starts the router server and launches Claude Code with the router configured as the API endpoint.",
-		RunE:  runCode,
+		Long: `Starts the router server and launches Claude Code with the router configured as the API endpoint.
+
+This command automatically configures Claude Code to use the router by setting
+the ANTHROPIC_BASE_URL environment variable and creating a temporary
+.claude/settings.local.json file in the current project.
+
+Flags:
+  -c, --config <path>   Path to custom configuration file (YAML or JSON).
+                        If not specified, searches for config in:
+                        - .ccrouter.yml in project root
+                        - ~/.config/ccrouter/config.yml (global)
+
+Examples:
+  # Start with default configuration
+  ccrouter code
+
+  # Start with custom config file
+  ccrouter code --config /path/to/config.yml
+
+Notes:
+  - The router runs in the foreground and terminates when Claude Code exits
+  - Press Ctrl+C to stop both the router and Claude Code
+  - The temporary settings.local.json file is cleaned up on exit
+
+Flags:
+  --log-destination <dest>  Log destination: "file", "stdout", "stderr", or a file path.
+                           Overrides config file setting. Default: from config.
+  --log-level <level>       Log level: "debug", "info", "warn", or "error".
+                           Overrides config file setting. Default: from config.`,
+		RunE: runCode,
 	}
 
 	cmd.Flags().StringP("config", "c", "", "Path to config file")
+	cmd.Flags().String("log-destination", "", "Log destination (file|stdout|stderr|path)")
+	cmd.Flags().String("log-level", "", "Log level: debug, info, warn, error (default: from config)")
 
 	return cmd
 }
@@ -35,6 +68,7 @@ func NewCodeCommand() *cobra.Command {
 func runCode(cmd *cobra.Command, args []string) error {
 	// Get flags
 	configPath, _ := cmd.Flags().GetString("config")
+	logDestination, _ := cmd.Flags().GetString("log-destination")
 
 	// Get working directory
 	projectRoot, err := os.Getwd()
@@ -62,8 +96,56 @@ func runCode(cmd *cobra.Command, args []string) error {
 	instanceID := daemon.GenerateInstanceID()
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 
+	// Apply log destination overrides from flags
+	if logDestination != "" {
+		cfg.Logging.Destination = logDestination
+		cfg.Logging.Enabled = true // CLI flag implicitly enables logging
+	}
+
+	// Apply log level override from flag
+	logLevel, _ := cmd.Flags().GetString("log-level")
+	if logLevel != "" {
+		cfg.Logging.Level = logLevel
+		cfg.Logging.Enabled = true // CLI flag implicitly enables logging
+	}
+
+	// Set per-instance log file path if logging to file
+	if cfg.Logging.ShouldLogToFile() && cfg.Logging.FilePath == "" {
+		logPath, err := cfg.Logging.GetLogPathWithInstance(instanceID)
+		if err == nil {
+			cfg.Logging.FilePath = logPath
+		}
+	}
+
+	// Initialize logging - IMPORTANT: Do this before starting server
+	// to prevent log messages from breaking Claude Code's UI
+	logCleanup, err := logging.Init(&cfg.Logging)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logging: %w", err)
+	}
+	defer logCleanup()
+
+	// Verify logging is working by writing a test message
+	logging.Infof("Logging initialized - router starting for Claude Code on %s", addr)
+
 	// Start in foreground mode
 	fmt.Printf("Starting router on %s\n", addr)
+	if cfg.Logging.IsEnabled() {
+		if cfg.Logging.Destination == "file" || cfg.Logging.Destination == "" {
+			if logPath, logErr := cfg.Logging.GetLogPath(); logErr == nil {
+				fmt.Printf("Logging to: %s\n", logPath)
+			}
+		} else if cfg.Logging.Destination == "stdout" {
+			fmt.Printf("Logging to: stdout\n")
+		} else if cfg.Logging.Destination == "stderr" {
+			fmt.Printf("Logging to: stderr\n")
+		} else {
+			// Custom path
+			fmt.Printf("Logging to: %s\n", cfg.Logging.Destination)
+		}
+	} else {
+		fmt.Printf("Logging: disabled\n")
+	}
 
 	// Create server
 	serverCfg := &proxy.ServerConfig{
@@ -124,7 +206,35 @@ func runCode(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save instance metadata: %v\n", err)
 	}
 
-	// Set environment variable for Claude Code
+	// Create temporary settings.local.json to override global settings
+	// This ensures Claude Code uses the router's base URL
+	settingsPath := filepath.Join(projectRoot, ".claude", "settings.local.json")
+	settingsDir := filepath.Dir(settingsPath)
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to create .claude directory: %v\n", err)
+	}
+
+	settings := map[string]interface{}{
+		"env": map[string]string{
+			"ANTHROPIC_BASE_URL": fmt.Sprintf("http://%s", addr),
+		},
+	}
+
+	settingsData, err := json.MarshalIndent(settings, "", "  ")
+	if err == nil {
+		if err := os.WriteFile(settingsPath, settingsData, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to write settings.local.json: %v\n", err)
+		} else {
+			defer func() {
+				os.Remove(settingsPath)
+			}()
+			fmt.Printf("Created %s to route requests through the proxy\n", settingsPath)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "Warning: failed to marshal settings: %v\n", err)
+	}
+
+	// Set environment variable for Claude Code (as backup)
 	os.Setenv("ANTHROPIC_BASE_URL", fmt.Sprintf("http://%s", addr))
 
 	// Find claude binary

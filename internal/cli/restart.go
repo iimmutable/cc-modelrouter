@@ -15,8 +15,27 @@ func NewRestartCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restart [instance-id]",
 		Short: "Restart a router instance",
-		Long:  "Restarts a running router instance. If no instance ID is provided, restarts all running instances.",
-		RunE:  runRestart,
+		Long: `Restarts a running router instance. If no instance ID is provided, restarts all running instances.
+
+Note: This command stops the instance(s) and prints the command to restart them.
+You must manually run the suggested start command.
+
+Arguments:
+  instance-id    Optional. The specific instance ID to restart.
+                  Use "ccrouter status" to list all instances.
+                  If omitted, restarts all running instances.
+
+Flags:
+  -c, --config <path>   Path to configuration file for the new instance.
+                        (Reserved for future use)
+
+Examples:
+  # Restart all running instances
+  ccrouter restart
+
+  # Restart a specific instance
+  ccrouter restart abc123def456`,
+		RunE: runRestart,
 	}
 
 	cmd.Flags().StringP("config", "c", "", "Path to config file for restart")

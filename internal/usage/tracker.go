@@ -2,9 +2,10 @@ package usage
 
 import (
 	"database/sql"
-	"log"
 	"sync"
 	"time"
+
+	"github.com/iimmutable/cc-modelrouter/internal/logging"
 )
 
 const (
@@ -82,7 +83,7 @@ func (t *Tracker) flush() {
 	// Batch insert
 	tx, err := t.db.Begin()
 	if err != nil {
-		log.Printf("usage tracker: failed to begin transaction: %v", err)
+		logging.Errorf("usage tracker: failed to begin transaction: %v", err)
 		// Restore records to buffer on error
 		t.buffer = append(t.buffer, records...)
 		return
@@ -91,7 +92,7 @@ func (t *Tracker) flush() {
 
 	for i, r := range records {
 		if err := InsertRecord(tx, r); err != nil {
-			log.Printf("usage tracker: failed to insert record %d: %v", i, err)
+			logging.Errorf("usage tracker: failed to insert record %d: %v", i, err)
 			// Restore unprocessed records to buffer
 			t.buffer = append(t.buffer, records[i:]...)
 			return
@@ -99,7 +100,7 @@ func (t *Tracker) flush() {
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Printf("usage tracker: failed to commit transaction: %v", err)
+		logging.Errorf("usage tracker: failed to commit transaction: %v", err)
 		// Restore records to buffer on commit failure
 		t.buffer = append(t.buffer, records...)
 		return

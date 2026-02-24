@@ -140,6 +140,10 @@ func (m *mockTransformer) TransformResponse(resp *http.Response) (*anthropic.Res
 
 func (m *mockTransformer) SupportsStreaming() bool { return false }
 
+func (m *mockTransformer) TransformSSEEvent(event *SSEEvent) ([]SSEEvent, error) {
+	return nil, nil
+}
+
 func (m *mockTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
 	return nil, nil
 }

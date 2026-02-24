@@ -14,7 +14,19 @@ func NewConfigCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Show or manage configuration",
-		Long:  "Shows the active configuration or manages configuration files.",
+		Long: `Show or manage configuration files for the router.
+
+Configuration is loaded from the following locations (in order of priority):
+  1. Custom file specified via --config flag
+  2. .ccrouter.yml in the current project root
+  3. ~/.config/ccrouter/config.yml (global configuration)
+
+Available subcommands:
+  show    Display the active configuration (API keys are masked)
+  path    Show the configuration file search paths
+  init    Create a sample configuration file
+
+Use "ccrouter config [subcommand] --help" for more information.`,
 	}
 
 	cmd.AddCommand(newConfigShowCommand())
@@ -28,8 +40,21 @@ func newConfigShowCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show active configuration",
-		Long:  "Shows the currently active configuration.",
-		RunE:  runConfigShow,
+		Long: `Shows the currently active configuration.
+
+Displays the merged configuration from all sources (project, global, custom).
+API keys are masked for security.
+
+Flags:
+  -c, --config <path>   Path to custom configuration file to display.
+
+Examples:
+  # Show active configuration
+  ccrouter config show
+
+  # Show specific config file
+  ccrouter config show --config /path/to/config.yml`,
+		RunE: runConfigShow,
 	}
 
 	cmd.Flags().StringP("config", "c", "", "Path to config file")
@@ -82,7 +107,13 @@ func newConfigPathCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "path",
 		Short: "Show configuration file paths",
-		Long:  "Shows the paths where configuration files are searched.",
+		Long: `Shows the paths where configuration files are searched.
+
+This displays both the project-specific and global configuration file paths
+relative to the current working directory.
+
+Examples:
+  ccrouter config path`,
 		RunE:  runConfigPath,
 	}
 
@@ -105,7 +136,24 @@ func newConfigInitCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Create a sample configuration file",
-		Long:  "Creates a sample configuration file in the project directory.",
+		Long: `Creates a sample configuration file in the project directory.
+
+The sample configuration includes:
+  - Server settings (host, port)
+  - Example provider configurations (Anthropic, OpenRouter)
+  - Route mappings for different Claude Code modes
+  - Retry settings
+
+Flags:
+  --global    Create the configuration in the global location
+              (~/.config/ccrouter/config.yml) instead of project directory.
+
+Examples:
+  # Create project-level config
+  ccrouter config init
+
+  # Create global config
+  ccrouter config init --global`,
 		RunE:  runConfigInit,
 	}
 
@@ -181,8 +229,9 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 func maskSensitiveConfig(cfg *config.Config) *config.Config {
 	// Create a copy with masked API keys
 	masked := &config.Config{
-		Server: cfg.Server,
-		Router: cfg.Router,
+		Server:  cfg.Server,
+		Router:  cfg.Router,
+		Logging: cfg.Logging,
 		Providers: make(map[string]config.ProviderConfig),
 	}
 

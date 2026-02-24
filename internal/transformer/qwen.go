@@ -236,9 +236,154 @@ func (t *QwenTransformer) SupportsStreaming() bool {
 	return true
 }
 
+// TransformSSEEvent transforms Qwen/OpenAI SSE events to Anthropic format.
+func (t *QwenTransformer) TransformSSEEvent(event *SSEEvent) ([]SSEEvent, error) {
+	// Parse the OpenAI/Qwen chunk
+	var openaiChunk map[string]any
+	if err := json.Unmarshal(event.Data, &openaiChunk); err != nil {
+		// If it's already Anthropic format, pass through
+		return []SSEEvent{*event}, nil
+	}
+
+	var result []SSEEvent
+
+	// Check for finish_reason to detect stream completion
+	if openaiChunk["choices"] != nil {
+		choices, ok := openaiChunk["choices"].([]any)
+		if ok && len(choices) > 0 {
+			choice, ok := choices[0].(map[string]any)
+			if ok {
+				finishReason := choice["finish_reason"]
+				if finishReason != nil && finishReason != "" {
+					// Stream finished - emit content_block_stop event
+					stopData, err := json.Marshal(map[string]any{
+						"type":  "content_block_stop",
+						"index": 0,
+					})
+					if err != nil {
+						return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
+					}
+					if len(stopData) == 0 {
+						return nil, fmt.Errorf("content_block_stop event marshaled to empty JSON")
+					}
+					result = append(result, SSEEvent{
+						EventType: "content_block_stop",
+						Data:      stopData,
+					})
+
+					// Also emit message_stop event
+					messageStopData, err := json.Marshal(map[string]string{
+						"type": "message_stop",
+					})
+					if err != nil {
+						return nil, fmt.Errorf("failed to marshal message_stop event: %w", err)
+					}
+					if len(messageStopData) == 0 {
+						return nil, fmt.Errorf("message_stop event marshaled to empty JSON")
+					}
+					result = append(result, SSEEvent{
+						EventType: "message_stop",
+						Data:      messageStopData,
+					})
+					return result, nil
+				}
+			}
+		}
+	}
+
+	// Extract content from delta
+	if openaiChunk["choices"] != nil {
+		choices, ok := openaiChunk["choices"].([]any)
+		if ok && len(choices) > 0 {
+			choice, ok := choices[0].(map[string]any)
+			if ok {
+				delta, ok := choice["delta"].(map[string]any)
+				if ok {
+					content, hasContent := delta["content"].(string)
+					if hasContent && content != "" {
+						// Convert to Anthropic content_block_delta format
+						anthropicDelta := map[string]any{
+							"type":  "content_block_delta",
+							"index": 0,
+							"delta": map[string]string{
+								"type": "text_delta",
+								"text": content,
+							},
+						}
+						data, err := json.Marshal(anthropicDelta)
+						if err != nil {
+							return nil, fmt.Errorf("failed to marshal content_block_delta event: %w", err)
+						}
+						if len(data) == 0 {
+							return nil, fmt.Errorf("content_block_delta event marshaled to empty JSON")
+						}
+						return []SSEEvent{
+							{
+								EventType: "content_block_delta",
+								Data:      data,
+							},
+						}, nil
+					}
+				}
+			}
+		}
+	}
+
+	// Pass through unknown chunks unchanged
+	return []SSEEvent{*event}, nil
+}
+
 // TransformStreamChunk transforms Qwen/OpenAI SSE to Anthropic format.
+// Deprecated: Use TransformSSEEvent for proper SSE event handling.
 func (t *QwenTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
-	// For now, pass through the OpenAI format
-	// Full implementation would convert to Anthropic streaming format
+	// Parse the OpenAI/Qwen chunk
+	var openaiChunk map[string]any
+	if err := json.Unmarshal(chunk, &openaiChunk); err != nil {
+		// If it's already Anthropic format, pass through
+		return chunk, nil
+	}
+
+	// Check for done signal
+	if openaiChunk["choices"] != nil {
+		choices, ok := openaiChunk["choices"].([]any)
+		if ok && len(choices) > 0 {
+			choice, ok := choices[0].(map[string]any)
+			if ok {
+				finishReason := choice["finish_reason"]
+				if finishReason != nil {
+					// Stream finished - return content_block_stop
+					return []byte(`{"type":"content_block_stop"}`), nil
+				}
+			}
+		}
+	}
+
+	// Extract content from delta
+	if openaiChunk["choices"] != nil {
+		choices, ok := openaiChunk["choices"].([]any)
+		if ok && len(choices) > 0 {
+			choice, ok := choices[0].(map[string]any)
+			if ok {
+				delta, ok := choice["delta"].(map[string]any)
+				if ok {
+					content, hasContent := delta["content"].(string)
+					if hasContent && content != "" {
+						// Convert to Anthropic content_block_delta format
+						anthropicChunk := map[string]any{
+							"type":  "content_block_delta",
+							"index": 0,
+							"delta": map[string]string{
+								"type": "text_delta",
+								"text": content,
+							},
+						}
+						return json.Marshal(anthropicChunk)
+					}
+				}
+			}
+		}
+	}
+
+	// Pass through unknown chunks
 	return chunk, nil
 }

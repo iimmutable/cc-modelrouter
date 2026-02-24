@@ -71,7 +71,13 @@ func (t *GLMTransformer) SupportsStreaming() bool {
 	return true
 }
 
+// TransformSSEEvent passes through GLM (Anthropic-compatible) events unchanged.
+func (t *GLMTransformer) TransformSSEEvent(event *SSEEvent) ([]SSEEvent, error) {
+	return []SSEEvent{*event}, nil
+}
+
 // TransformStreamChunk passes through the chunk unchanged (Anthropic-compatible).
+// Deprecated: Use TransformSSEEvent for proper SSE event handling.
 func (t *GLMTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
 	return chunk, nil
 }

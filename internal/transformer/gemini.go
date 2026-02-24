@@ -276,29 +276,123 @@ func (t *GeminiTransformer) SupportsStreaming() bool {
 	return true
 }
 
-// TransformStreamChunk transforms Gemini SSE to Anthropic format.
-func (t *GeminiTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
+// TransformSSEEvent transforms Gemini SSE events to Anthropic format.
+func (t *GeminiTransformer) TransformSSEEvent(event *SSEEvent) ([]SSEEvent, error) {
+	// Parse the Gemini chunk
 	var geminiChunk GeminiResponse
-	if err := json.Unmarshal(chunk, &geminiChunk); err != nil {
-		return nil, fmt.Errorf("failed to parse gemini chunk: %w", err)
+	if err := json.Unmarshal(event.Data, &geminiChunk); err != nil {
+		// If parsing fails, might already be Anthropic format
+		return []SSEEvent{*event}, nil
 	}
 
-	// Convert to Anthropic streaming event
-	result := t.convertResponse(&geminiChunk)
+	var result []SSEEvent
 
-	// Wrap in Anthropic streaming format
-	streamEvent := map[string]any{
-		"type":    "content_block_delta",
-		"index":   0,
-		"delta":   map[string]string{"type": "text_delta", "text": ""},
-	}
+	// Extract text from candidates
+	if len(geminiChunk.Candidates) > 0 {
+		candidate := geminiChunk.Candidates[0]
+		if len(candidate.Content.Parts) > 0 {
+			for _, part := range candidate.Content.Parts {
+				if part.Text != "" {
+					// Convert to Anthropic content_block_delta format
+					anthropicChunk := map[string]any{
+						"type":  "content_block_delta",
+						"index": 0,
+						"delta": map[string]string{
+							"type": "text_delta",
+							"text": part.Text,
+						},
+					}
+					data, err := json.Marshal(anthropicChunk)
+					if err != nil {
+						return nil, fmt.Errorf("failed to marshal content_block_delta event: %w", err)
+					}
+					if len(data) == 0 {
+						return nil, fmt.Errorf("content_block_delta event marshaled to empty JSON")
+					}
+					return []SSEEvent{
+						{
+							EventType: "content_block_delta",
+							Data:      data,
+						},
+					}, nil
+				}
+			}
+		}
 
-	if len(result.Content) > 0 && result.Content[0].Text != "" {
-		streamEvent["delta"] = map[string]string{
-			"type": "text_delta",
-			"text": result.Content[0].Text,
+		// Check for finish reason (end of stream)
+		if candidate.FinishReason != "" && candidate.FinishReason != "IN_PROGRESS" {
+			stopData, err := json.Marshal(map[string]any{
+				"type":  "content_block_stop",
+				"index": 0,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal content_block_stop event: %w", err)
+			}
+			if len(stopData) == 0 {
+				return nil, fmt.Errorf("content_block_stop event marshaled to empty JSON")
+			}
+			result = append(result, SSEEvent{
+				EventType: "content_block_stop",
+				Data:      stopData,
+			})
+
+			messageStopData, err := json.Marshal(map[string]string{
+				"type": "message_stop",
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal message_stop event: %w", err)
+			}
+			if len(messageStopData) == 0 {
+				return nil, fmt.Errorf("message_stop event marshaled to empty JSON")
+			}
+			result = append(result, SSEEvent{
+				EventType: "message_stop",
+				Data:      messageStopData,
+			})
+			return result, nil
 		}
 	}
 
-	return json.Marshal(streamEvent)
+	// No content to return
+	return result, nil
+}
+
+// TransformStreamChunk transforms Gemini SSE to Anthropic format.
+// Deprecated: Use TransformSSEEvent for proper SSE event handling.
+func (t *GeminiTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
+	// Parse the Gemini chunk
+	var geminiChunk GeminiResponse
+	if err := json.Unmarshal(chunk, &geminiChunk); err != nil {
+		// If parsing fails, might already be Anthropic format
+		return chunk, nil
+	}
+
+	// Extract text from candidates
+	if len(geminiChunk.Candidates) > 0 {
+		candidate := geminiChunk.Candidates[0]
+		if len(candidate.Content.Parts) > 0 {
+			for _, part := range candidate.Content.Parts {
+				if part.Text != "" {
+					// Convert to Anthropic content_block_delta format
+					anthropicChunk := map[string]any{
+						"type":  "content_block_delta",
+						"index": 0,
+						"delta": map[string]string{
+							"type": "text_delta",
+							"text": part.Text,
+						},
+					}
+					return json.Marshal(anthropicChunk)
+				}
+			}
+		}
+
+		// Check for finish reason (end of stream)
+		if candidate.FinishReason != "" && candidate.FinishReason != "IN_PROGRESS" {
+			return []byte(`{"type":"content_block_stop"}`), nil
+		}
+	}
+
+	// No content to return
+	return nil, nil
 }

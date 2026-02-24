@@ -12,8 +12,24 @@ func NewCleanCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clean",
 		Short: "Remove stale instance files",
-		Long:  "Removes instance metadata files for processes that are no longer running.",
-		RunE:  runClean,
+		Long: `Removes instance metadata files for processes that are no longer running.
+
+Over time, instance metadata files can accumulate if processes terminate abnormally.
+This command cleans up these stale files.
+
+By default, only removes instances whose processes are no longer running.
+
+Flags:
+  -a, --all    Remove all instance files including running ones.
+                Use with caution - this will remove metadata for active instances.
+
+Examples:
+  # Remove stale instance files only
+  ccrouter clean
+
+  # Remove all instance files (use with caution)
+  ccrouter clean --all`,
+		RunE: runClean,
 	}
 
 	cmd.Flags().BoolP("all", "a", false, "Remove all instance files including running ones")

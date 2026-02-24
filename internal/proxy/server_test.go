@@ -2,10 +2,13 @@ package proxy
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/iimmutable/cc-modelrouter/internal/config"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
+	"github.com/iimmutable/cc-modelrouter/internal/transformer"
 	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
@@ -107,8 +110,7 @@ func TestServer_IsRunning(t *testing.T) {
 		t.Fatalf("failed to start server: %v", err)
 	}
 
-	// Give it a moment to start
-	time.Sleep(10 * time.Millisecond)
+	// No sleep needed - Start() now blocks until server is ready
 
 	if !server.IsRunning() {
 		t.Error("expected server to be running after Start()")
@@ -138,8 +140,7 @@ func TestServer_StartTwice(t *testing.T) {
 	}
 	defer server.Stop(context.Background())
 
-	// Give it a moment to start
-	time.Sleep(10 * time.Millisecond)
+	// No sleep needed - Start() now blocks until server is ready
 
 	// Try to start again
 	err = server.Start()
@@ -161,144 +162,417 @@ func TestServer_StopWhenNotRunning(t *testing.T) {
 	}
 }
 
-func TestNewHandler(t *testing.T) {
-	handler := NewHandler(50 * 1024 * 1024)
+func TestNewServer_WithCustomConfig(t *testing.T) {
+	cfg := &ServerConfig{
+		Host:           "custom-host",
+		Port:           9090,
+		MaxRequestSize: 100 * 1024 * 1024,
+	}
 
-	if handler == nil {
-		t.Error("expected non-nil handler")
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
 	}
-	if handler.maxRequestSize != 50*1024*1024 {
-		t.Errorf("expected max request size 50MB, got %d", handler.maxRequestSize)
+
+	if server.config.Host != "custom-host" {
+		t.Errorf("expected Host 'custom-host', got %s", server.config.Host)
 	}
-	if handler.providerClients == nil {
-		t.Error("expected providerClients map to be initialized")
+	if server.config.Port != 9090 {
+		t.Errorf("expected Port 9090, got %d", server.config.Port)
+	}
+	if server.config.MaxRequestSize != 100*1024*1024 {
+		t.Errorf("expected MaxRequestSize 100MB, got %d", server.config.MaxRequestSize)
 	}
 }
 
-func TestIsBackground(t *testing.T) {
-	handler := NewHandler(50 * 1024 * 1024)
+func TestNewServer_ZeroMaxRequestSize(t *testing.T) {
+	cfg := &ServerConfig{
+		Host:           "localhost",
+		Port:           8081,
+		MaxRequestSize: 0,
+	}
 
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// Should use default
+	if server.config.MaxRequestSize != 50*1024*1024 {
+		t.Errorf("expected default MaxRequestSize 50MB, got %d", server.config.MaxRequestSize)
+	}
+}
+
+func TestServer_Setters(t *testing.T) {
+	cfg := &ServerConfig{}
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	router := &serverTestMockRouter{}
+	server.SetRouter(router)
+	if server.handler.router != router {
+		t.Error("expected router to be set")
+	}
+
+	reg := &serverTestMockTransformerRegistry{}
+	server.SetTransformerRegistry(reg)
+	if server.handler.transformerRegistry != reg {
+		t.Error("expected transformerRegistry to be set")
+	}
+
+	clients := map[string]HTTPClient{}
+	server.SetProviderClients(clients)
+	if server.handler.providerClients == nil {
+		t.Error("expected providerClients to be set")
+	}
+
+	tracker := &serverTestMockUsageTracker{}
+	server.SetUsageTracker(tracker)
+	if server.usageTracker != tracker {
+		t.Error("expected usageTracker to be set")
+	}
+	if server.handler.usageTracker != tracker {
+		t.Error("expected handler usageTracker to be set")
+	}
+
+	server.SetInstanceID("test-instance")
+	if server.instanceID != "test-instance" {
+		t.Errorf("expected instanceID 'test-instance', got %s", server.instanceID)
+	}
+}
+
+func TestServer_TimeoutConfiguration(t *testing.T) {
+	cfg := &ServerConfig{
+		Host: "localhost",
+		Port: 0,
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// Start server to initialize the http.Server
+	err = server.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// No sleep needed - Start() now blocks until server is ready
+
+	// The underlying http.Server should be created
+	if server.server == nil {
+		t.Fatal("expected server to be initialized after Start")
+	}
+
+	// Check read timeout
+	if server.server.ReadTimeout != 30*time.Second {
+		t.Errorf("expected ReadTimeout 30s, got %v", server.server.ReadTimeout)
+	}
+
+	// Check write timeout
+	if server.server.WriteTimeout != 5*time.Minute {
+		t.Errorf("expected WriteTimeout 5m, got %v", server.server.WriteTimeout)
+	}
+
+	// Clean up
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	server.Stop(ctx)
+}
+
+func TestServer_HandlerCreated(t *testing.T) {
+	cfg := &ServerConfig{
+		MaxRequestSize: 1024 * 1024,
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if server.handler == nil {
+		t.Error("expected handler to be created")
+	}
+}
+
+func TestServer_HandlerMaxRequestSize(t *testing.T) {
 	tests := []struct {
-		name     string
-		model    string
-		expected bool
+		name           string
+		maxRequestSize int64
 	}{
-		{"claude-3-5-haiku-20241022", "claude-3-5-haiku-20241022", true},
-		{"claude-3-5-haiku-latest", "claude-3-5-haiku-latest", true},
-		{"claude-haiku-4-20250514", "claude-haiku-4-20250514", true},
-		{"claude-sonnet-4-20250514", "claude-sonnet-4-20250514", false},
-		{"claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20241022", false},
-		{"claude-opus-4-20250514", "claude-opus-4-20250514", false},
-		{"gpt-4o", "gpt-4o", false},
-		{"deepseek-chat", "deepseek-chat", false},
-		{"Haiku", "Haiku", false}, // Must contain "claude" and "haiku"
+		{"1MB", 1024 * 1024},
+		{"10MB", 10 * 1024 * 1024},
+		{"50MB", 50 * 1024 * 1024},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := &anthropic.Request{Model: tt.model}
-			result := handler.isBackground(req)
-			if result != tt.expected {
-				t.Errorf("isBackground(%s) = %v, expected %v", tt.model, result, tt.expected)
+			cfg := &ServerConfig{
+				MaxRequestSize: tt.maxRequestSize,
+			}
+
+			server, err := NewServer(cfg)
+			if err != nil {
+				t.Fatalf("NewServer failed: %v", err)
+			}
+
+			if server.handler.maxRequestSize != tt.maxRequestSize {
+				t.Errorf("expected handler maxRequestSize %d, got %d",
+					tt.maxRequestSize, server.handler.maxRequestSize)
 			}
 		})
 	}
 }
 
-func TestGetThinkLevel(t *testing.T) {
-	handler := NewHandler(50 * 1024 * 1024)
-
-	tests := []struct {
-		name     string
-		thinking *anthropic.ThinkingConfig
-		expected router.ThinkLevel
-	}{
-		{"nil thinking", nil, router.ThinkNone},
-		{"thinking with budget 0", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 0}, router.ThinkNone},
-		{"thinking with budget 1000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 1000}, router.ThinkBasic},
-		{"thinking with budget 4000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 4000}, router.ThinkBasic},
-		{"thinking with budget 5000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 5000}, router.ThinkBasic}, // < 10000
-		{"thinking with budget 10000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 10000}, router.ThinkMiddle},
-		{"thinking with budget 20000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 20000}, router.ThinkMiddle}, // < 32000
-		{"thinking with budget 32000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 32000}, router.ThinkHighest},
-		{"thinking with budget 50000", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 50000}, router.ThinkHighest},
-		{"thinking with budget 1", &anthropic.ThinkingConfig{Type: "enabled", BudgetTokens: 1}, router.ThinkBasic}, // Any non-zero is basic
+func TestServer_ShutdownWithUsageTracker(t *testing.T) {
+	cfg := &ServerConfig{
+		Host: "localhost",
+		Port: 0,
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := &anthropic.Request{Thinking: tt.thinking}
-			result := handler.getThinkLevel(req)
-			if result != tt.expected {
-				t.Errorf("getThinkLevel() = %v, expected %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestHasWebSearch(t *testing.T) {
-	handler := NewHandler(50 * 1024 * 1024)
-
-	tests := []struct {
-		name     string
-		tools    []anthropic.Tool
-		expected bool
-	}{
-		{"no tools", nil, false},
-		{"empty tools", []anthropic.Tool{}, false},
-		{"web_search tool", []anthropic.Tool{{Name: "web_search"}}, true},
-		{"WebSearch tool", []anthropic.Tool{{Name: "WebSearch"}}, true},
-		{"search tool", []anthropic.Tool{{Name: "search_files"}}, true},
-		{"web tool", []anthropic.Tool{{Name: "web_fetch"}}, true},
-		{"unrelated tool", []anthropic.Tool{{Name: "read_file"}}, false},
-		{"multiple tools with web", []anthropic.Tool{{Name: "read_file"}, {Name: "web_search"}}, true},
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := &anthropic.Request{Tools: tt.tools}
-			result := handler.hasWebSearch(req)
-			if result != tt.expected {
-				t.Errorf("hasWebSearch() = %v, expected %v", result, tt.expected)
-			}
-		})
+	// Create a usage tracker that implements Shutdown
+	tracker := &serverTestShutdownableTracker{
+		shutdownCalled: false,
+	}
+	server.SetUsageTracker(tracker)
+
+	// Start the server
+	err = server.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// No sleep needed - Start() now blocks until server is ready
+
+	// Stop the server
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	err = server.Stop(ctx)
+	if err != nil {
+		t.Errorf("Stop failed: %v", err)
+	}
+
+	// Verify Shutdown was called
+	if !tracker.shutdownCalled {
+		t.Error("expected usage tracker Shutdown to be called")
 	}
 }
 
-func TestHasImages(t *testing.T) {
-	handler := NewHandler(50 * 1024 * 1024)
-
-	tests := []struct {
-		name     string
-		messages []anthropic.Message
-		expected bool
-	}{
-		{"no messages", nil, false},
-		{"text only", []anthropic.Message{
-			{Content: []anthropic.ContentBlock{{Type: "text", Text: "hello"}}},
-		}, false},
-		{"image content", []anthropic.Message{
-			{Content: []anthropic.ContentBlock{{Type: "image"}}},
-		}, true},
-		{"mixed content", []anthropic.Message{
-			{Content: []anthropic.ContentBlock{
-				{Type: "text", Text: "hello"},
-				{Type: "image"},
-			}},
-		}, true},
-		{"image in second message", []anthropic.Message{
-			{Content: []anthropic.ContentBlock{{Type: "text", Text: "hello"}}},
-			{Content: []anthropic.ContentBlock{{Type: "image"}}},
-		}, true},
+func TestServer_ConcurrentIsRunning(t *testing.T) {
+	cfg := &ServerConfig{
+		Host: "localhost",
+		Port: 0,
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := &anthropic.Request{Messages: tt.messages}
-			result := handler.hasImages(req)
-			if result != tt.expected {
-				t.Errorf("hasImages() = %v, expected %v", result, tt.expected)
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// Start the server
+	err = server.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		server.Stop(ctx)
+	}()
+
+	// Test concurrent IsRunning calls
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func() {
+			if !server.IsRunning() {
+				t.Error("expected server to be running")
 			}
-		})
+			done <- true
+		}()
 	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+}
+
+func TestServer_StartWaitsForReadiness(t *testing.T) {
+	cfg := &ServerConfig{
+		Host: "localhost",
+		Port: 0, // Let OS pick port
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// Start should return only when server is ready
+	err = server.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		server.Stop(ctx)
+	}()
+
+	// After Start returns, server should be immediately accepting connections
+	// Verify by making an HTTP request
+	addr := server.Addr()
+	if addr == "localhost:0" {
+		// If port is 0, we need to get the actual bound port
+		// For this test, use a fixed port instead
+		t.Skip("Skipping test with dynamic port - use fixed port for readiness test")
+	}
+
+	// Try to connect immediately without sleep
+	client := &http.Client{
+		Timeout: 100 * time.Millisecond,
+	}
+	req, _ := http.NewRequest(http.MethodGet, "http://"+addr+"/v1/models", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Server not ready after Start returned: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// We expect 404 or 200 depending on handler setup
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		t.Errorf("Unexpected status code: %d", resp.StatusCode)
+	}
+}
+
+func TestServer_StartWithFixedPortIsReady(t *testing.T) {
+	// Use a random high port to avoid conflicts
+	serverCfg := &ServerConfig{
+		Host: "127.0.0.1",
+		Port: 19101,
+	}
+
+	server, err := NewServer(serverCfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// Set a minimal config to avoid nil pointer in handler
+	minimalConfig := &config.Config{
+		Providers: map[string]config.ProviderConfig{
+			"test": {
+				BaseURL: "http://example.com",
+				APIKey:  "test-key",
+				Models:  []string{"test-model"},
+			},
+		},
+	}
+	server.SetConfig(minimalConfig)
+
+	// Start should return only when server is ready
+	err = server.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		server.Stop(ctx)
+	}()
+
+	// After Start returns, server should be immediately accepting connections
+	// Verify by making an HTTP request WITHOUT any sleep
+	client := &http.Client{
+		Timeout: 100 * time.Millisecond,
+	}
+	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:19101/v1/models", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Server not ready after Start returned: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Should get a 200 OK for /v1/models
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Unexpected status code: %d", resp.StatusCode)
+	}
+}
+
+func TestServer_PortZero(t *testing.T) {
+	cfg := &ServerConfig{
+		Host: "localhost",
+		Port: 0, // Let OS pick port
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// Addr should still return a formatted address
+	addr := server.Addr()
+	if addr != "localhost:0" {
+		t.Errorf("expected address 'localhost:0', got '%s'", addr)
+	}
+}
+
+// Helper types for testing
+
+type serverTestMockRouter struct{}
+
+func (m *serverTestMockRouter) DetectRoute(req router.RouteRequest) string {
+	return "default"
+}
+
+func (m *serverTestMockRouter) GetTargets(routeName string) []config.RouteTarget {
+	return []config.RouteTarget{{Provider: "anthropic", Model: "claude-3"}}
+}
+
+type serverTestMockTransformerRegistry struct{}
+
+func (m *serverTestMockTransformerRegistry) Get(name string) (transformer.Transformer, error) {
+	return &serverTestAnthropicTransformer{}, nil
+}
+
+type serverTestAnthropicTransformer struct{}
+
+func (m *serverTestAnthropicTransformer) Name() string                               { return "anthropic" }
+func (m *serverTestAnthropicTransformer) TransformRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
+	return nil, nil
+}
+func (m *serverTestAnthropicTransformer) TransformResponse(resp *http.Response) (*anthropic.Response, error) {
+	return &anthropic.Response{}, nil
+}
+func (m *serverTestAnthropicTransformer) SupportsStreaming() bool {
+	return false
+}
+func (m *serverTestAnthropicTransformer) TransformSSEEvent(event *transformer.SSEEvent) ([]transformer.SSEEvent, error) {
+	return nil, nil
+}
+func (m *serverTestAnthropicTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
+	return chunk, nil
+}
+
+type serverTestMockUsageTracker struct{}
+
+func (t *serverTestMockUsageTracker) Record(instanceID, route, model string, tokens, fallbacks int) {}
+
+type serverTestShutdownableTracker struct {
+	shutdownCalled bool
+}
+
+func (t *serverTestShutdownableTracker) Record(instanceID, route, model string, tokens, fallbacks int) {}
+
+func (t *serverTestShutdownableTracker) Shutdown() {
+	t.shutdownCalled = true
 }

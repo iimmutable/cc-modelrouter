@@ -14,9 +14,44 @@ func NewUsageCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "usage [instance-id] [period]",
 		Short: "Show token usage statistics",
-		Long:  "Displays token usage statistics per model, per route, and per instance.",
-		Args:  cobra.MaximumNArgs(2),
-		RunE:  runUsage,
+		Long: `Displays token usage statistics per model, per route, and per instance.
+
+The usage data is tracked in a local database and includes:
+  - Total input/output tokens per model
+  - Request count per model
+  - Cost estimation (when pricing data is available)
+
+Arguments:
+  instance-id    Optional. Filter by specific instance ID.
+                  If omitted, shows usage for all instances.
+
+  period         Optional. Time period for the report.
+                  Predefined periods:
+                    - all-time (default)
+                    - today
+                    - this-week, last-week
+                    - this-month, last-month
+                    - this-quarter, last-quarter
+                    - this-year, last-year
+                  Custom range: YYYYMMDD-YYYYMMDD (e.g., 20240101-20240131)
+
+Examples:
+  # Show all-time usage for all instances
+  ccrouter usage
+
+  # Show usage for specific instance
+  ccrouter usage abc123def456
+
+  # Show today's usage
+  ccrouter usage today
+
+  # Show usage for a specific instance this month
+  ccrouter usage abc123def456 this-month
+
+  # Show usage for custom date range
+  ccrouter usage 20240101-20240131`,
+		Args: cobra.MaximumNArgs(2),
+		RunE: runUsage,
 	}
 
 	return cmd

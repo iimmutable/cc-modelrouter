@@ -16,6 +16,24 @@ func NewRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "ccrouter",
 		Short:   "Claude Code Model Router",
+		Long: `Claude Code Model Router (ccrouter) is a proxy server that routes API requests
+to multiple LLM providers based on configurable routing rules.
+
+It enables intelligent model selection, request transformation, and usage tracking
+for Claude Code and other Anthropic API clients.
+
+Available Commands:
+  code    Start router and launch Claude Code
+  start   Start the router server
+  stop    Stop a router instance
+  restart Restart a router instance
+  status  Show router instance status
+  clean   Remove stale instance files
+  config  Show or manage configuration
+  logs    Show instance logs
+  usage   Show token usage statistics
+
+Use "ccrouter [command] --help" for more information about a command.`,
 		Version: Version,
 	}
 

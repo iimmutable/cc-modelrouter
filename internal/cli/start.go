@@ -10,6 +10,7 @@ import (
 
 	"github.com/iimmutable/cc-modelrouter/internal/config"
 	"github.com/iimmutable/cc-modelrouter/internal/daemon"
+	"github.com/iimmutable/cc-modelrouter/internal/logging"
 	"github.com/iimmutable/cc-modelrouter/internal/provider"
 	"github.com/iimmutable/cc-modelrouter/internal/proxy"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
@@ -23,13 +24,52 @@ func NewStartCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the router server",
-		Long:  "Starts the router server in standalone mode.",
-		RunE:  runStart,
+		Long: `Starts the router server in standalone mode.
+
+The router acts as a proxy between Claude Code and LLM providers. It routes requests
+based on configured rules and transforms requests/responses for provider compatibility.
+
+Flags:
+  -c, --config <path>   Path to custom configuration file (YAML or JSON).
+                        If not specified, searches for config in:
+                        - .ccrouter.yml in project root
+                        - ~/.config/ccrouter/config.yml (global)
+
+  -p, --port <number>   Port number for the router to listen on.
+                        Overrides the port specified in config file.
+                        Default: 8081 (or value from config)
+
+  -H, --host <address>  Host address to bind to.
+                        Overrides the host specified in config file.
+                        Default: localhost (or value from config)
+
+Examples:
+  # Start with default configuration
+  ccrouter start
+
+  # Start with custom config file
+  ccrouter start --config /path/to/config.yml
+
+  # Start on specific port
+  ccrouter start --port 9090
+
+  # Start on specific host and port
+  ccrouter start --host 0.0.0.0 --port 8081
+
+After starting, set ANTHROPIC_BASE_URL to point to the router:
+  export ANTHROPIC_BASE_URL=http://localhost:8081
+
+Flags:
+  --log-destination <dest>  Log destination: "file", "stdout", "stderr", or a file path.
+                           Overrides config file setting.`,
+		RunE: runStart,
 	}
 
 	cmd.Flags().StringP("config", "c", "", "Path to config file")
 	cmd.Flags().IntP("port", "p", 0, "Port to listen on (overrides config)")
 	cmd.Flags().StringP("host", "H", "", "Host to bind to (overrides config)")
+	cmd.Flags().String("log-destination", "", "Log destination (file|stdout|stderr|path)")
+	cmd.Flags().String("log-level", "", "Log level: debug, info, warn, error (default: from config)")
 
 	return cmd
 }
@@ -39,6 +79,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	configPath, _ := cmd.Flags().GetString("config")
 	port, _ := cmd.Flags().GetInt("port")
 	host, _ := cmd.Flags().GetString("host")
+	logDestination, _ := cmd.Flags().GetString("log-destination")
 
 	// Get working directory
 	projectRoot, err := os.Getwd()
@@ -69,12 +110,58 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if host != "" {
 		cfg.Server.Host = host
 	}
+	if logDestination != "" {
+		cfg.Logging.Destination = logDestination
+		cfg.Logging.Enabled = true // CLI flag implicitly enables logging
+	}
 
-	// Generate instance ID
+	// Apply log level override
+	logLevel, _ := cmd.Flags().GetString("log-level")
+	if logLevel != "" {
+		cfg.Logging.Level = logLevel
+		cfg.Logging.Enabled = true // CLI flag implicitly enables logging
+	}
+
+	// Generate instance ID and address early (needed for logging)
 	instanceID := daemon.GenerateInstanceID()
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 
+	// Set per-instance log file path if logging to file
+	if cfg.Logging.ShouldLogToFile() && cfg.Logging.FilePath == "" {
+		logPath, err := cfg.Logging.GetLogPathWithInstance(instanceID)
+		if err == nil {
+			cfg.Logging.FilePath = logPath
+		}
+	}
+
+	// Initialize logging based on configuration
+	logCleanup, err := logging.Init(&cfg.Logging)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logging: %w", err)
+	}
+	defer logCleanup()
+
+	// Verify logging is working by writing a test message
+	logging.Infof("Logging initialized - router starting on %s", addr)
+
+	// Log startup
 	fmt.Printf("Starting router on %s\n", addr)
+	if cfg.Logging.IsEnabled() {
+		if cfg.Logging.Destination == "file" || cfg.Logging.Destination == "" {
+			if logPath, logErr := cfg.Logging.GetLogPath(); logErr == nil {
+				fmt.Printf("Logging to: %s\n", logPath)
+			}
+		} else if cfg.Logging.Destination == "stdout" {
+			fmt.Printf("Logging to: stdout\n")
+		} else if cfg.Logging.Destination == "stderr" {
+			fmt.Printf("Logging to: stderr\n")
+		} else {
+			// Custom path
+			fmt.Printf("Logging to: %s\n", cfg.Logging.Destination)
+		}
+	} else {
+		fmt.Printf("Logging: disabled\n")
+	}
 
 	// Create server
 	serverCfg := &proxy.ServerConfig{
@@ -130,6 +217,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 	tracker := usage.NewTracker(usageDB, usage.DefaultBufferSize, usage.DefaultFlushTimeout)
 	server.SetUsageTracker(tracker)
 	server.SetInstanceID(instanceID)
+
+	// Add logging interceptor
+	loggingInterceptor := proxy.NewLoggingInterceptor()
+	server.AddRequestInterceptor(loggingInterceptor)
+	server.AddResponseInterceptor(loggingInterceptor)
 
 	// Start server
 	if err := server.Start(); err != nil {

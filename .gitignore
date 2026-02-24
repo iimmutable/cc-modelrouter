@@ -27,3 +27,7 @@ go.work
 
 # Instance files
 ~/.cc-modelrouter/instances/
+
+# Debug log files
+debug.log
+*.log
