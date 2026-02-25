@@ -17,6 +17,7 @@ import (
 	"github.com/iimmutable/cc-modelrouter/internal/proxy"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
+	transformers "github.com/iimmutable/cc-modelrouter/internal/transformer/transformers"
 	"github.com/iimmutable/cc-modelrouter/internal/usage"
 )
 
@@ -67,14 +68,15 @@ func (m *mockTracker) Shutdown() {
 
 func TestIntegrationBasicRequest(t *testing.T) {
 	// Load test configuration
-	cfg, err := config.Load(".cc-modelrouter/test.config.json")
+	cfg, err := config.Load("../.cc-modelrouter/test.config.json")
 	if err != nil {
 		t.Skipf("Test config not found: %v", err)
 	}
 
 	// Initialize components
 	registry := transformer.NewRegistry()
-	registry.Register(transformer.NewAnthropicTransformer())
+	// GLM uses Anthropic-compatible transformer
+	registry.Register(transformers.NewAnthropicTransformer())
 
 	clients := make(map[string]proxy.HTTPClient)
 	for name, providerCfg := range cfg.Providers {
@@ -101,7 +103,7 @@ func TestIntegrationBasicRequest(t *testing.T) {
 
 	// Create test request
 	reqBody := map[string]any{
-		"model":      "claude-3-5-sonnet-20241022",
+		"model":      "glm-4.7",
 		"max_tokens": 100,
 		"messages": []map[string]any{
 			{"role": "user", "content": "Say 'Hello'"},

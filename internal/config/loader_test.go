@@ -53,7 +53,7 @@ func TestEnvVarInterpolation(t *testing.T) {
 	defer os.Unsetenv("TEST_API_KEY")
 
 	input := "${TEST_API_KEY}"
-	result := interpolateEnvVars(input)
+	result, _ := interpolateEnvVars(input)
 
 	if result != "secret-key" {
 		t.Errorf("expected 'secret-key', got '%s'", result)

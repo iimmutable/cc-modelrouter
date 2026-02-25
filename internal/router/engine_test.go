@@ -12,7 +12,7 @@ func TestRouteDetection(t *testing.T) {
 			Routes: map[string]string{
 				"default":     "bigmodel:glm-4.7;openrouter:claude-sonnet-4.5",
 				"background":  "bigmodel:glm-4.5-air",
-				"longContext": "bigmodel:glm-4.7;openrouter:gemini-2.5-pro",
+				"longContext": "bigmodel:glm-4.7;gemini:gemini-2.5-pro",
 			},
 		},
 	}

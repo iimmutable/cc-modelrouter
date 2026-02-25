@@ -5,14 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/iimmutable/cc-modelrouter/internal/config"
 	"github.com/iimmutable/cc-modelrouter/internal/logging"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
 	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
+)
+
+const (
+	// FilesAPIBetaVersion is the required beta version for Files API
+	FilesAPIBetaVersion = "files-api-2025-04-14"
 )
 
 // Router interface for handler dependency.
@@ -118,6 +125,27 @@ func (h *Handler) AddStreamingInterceptor(interceptor StreamingResponseIntercept
 	h.streamingInterceptors = append(h.streamingInterceptors, interceptor)
 }
 
+// deepCopyRequest creates a true deep copy of an Anthropic request.
+//
+// This is critical for failover scenarios where the same request may be sent
+// to multiple providers sequentially. Without a deep copy, modifications made
+// by one transformer (e.g., signature normalization) could affect subsequent
+// provider attempts, causing validation errors.
+//
+// The deep copy is created using JSON marshal/unmarshal which ensures all
+// nested structures (Messages, ContentBlocks, etc.) are independent copies.
+func deepCopyRequest(req *anthropic.Request) (*anthropic.Request, error) {
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request for deep copy: %w", err)
+	}
+	var reqCopy anthropic.Request
+	if err := json.Unmarshal(reqJSON, &reqCopy); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal request deep copy: %w", err)
+	}
+	return &reqCopy, nil
+}
+
 // ServeHTTP handles HTTP requests.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Supported Anthropic API v1 endpoints
@@ -141,11 +169,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle Files API endpoints
+	if strings.HasPrefix(r.URL.Path, "/v1/files") {
+		h.handleFilesAPI(w, r)
+		return
+	}
+
 	// Handle POST to supported message endpoints
 	if r.Method == http.MethodPost && isSupported {
 		// Read and parse request
 		body, err := io.ReadAll(io.LimitReader(r.Body, h.maxRequestSize))
 		if err != nil {
+			logging.Errorf("[REQUEST VALIDATION] Failed to read request body: %v", err)
 			http.Error(w, "Failed to read request", http.StatusBadRequest)
 			return
 		}
@@ -153,9 +188,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		var req anthropic.Request
 		if err := json.Unmarshal(body, &req); err != nil {
+			// Log the actual error at ERROR level
+			logging.Errorf("[REQUEST VALIDATION] Invalid request format: %v", err)
+			// Log request body snippet at DEBUG level to avoid log spam
+			bodySnippet := string(body)
+			if len(bodySnippet) > 500 {
+				bodySnippet = bodySnippet[:500] + "..."
+			}
+			logging.Debugf("[REQUEST VALIDATION] Request body snippet: %s", bodySnippet)
 			http.Error(w, "Invalid request format", http.StatusBadRequest)
 			return
 		}
+
+		// Log successful request parsing (debug level)
+		logging.Debugf("[REQUEST VALIDATION] Successfully parsed request: model=%s, messages=%d, stream=%v",
+			req.Model, len(req.Messages), req.Stream)
 
 		// Handle the request
 		h.handleMessages(w, r, &req)
@@ -208,12 +255,30 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request, req *an
 	// Try each target with failover for non-streaming
 	var fallbackCount int
 	var successfulModel string
+	var lastErr error
 
 	for i, target := range targets {
+		// FAILOVER LOGGING: Log attempt start with request details
+		logging.Debugf("[FAILOVER] Attempt %d with %s/%s, messages: %d", i, target.Provider, target.Model, len(req.Messages))
+		// Log thinking block count for debugging
+		for msgIdx, msg := range req.Messages {
+			thinkingCount := 0
+			for _, block := range msg.Content {
+				if block.Type == "thinking" {
+					thinkingCount++
+				}
+			}
+			if thinkingCount > 0 {
+				logging.Debugf("[FAILOVER] Message[%d] has %d thinking blocks", msgIdx, thinkingCount)
+			}
+		}
+
 		resp, err := h.tryTarget(r.Context(), req, target)
 		if err != nil {
 			fallbackCount = i
+			lastErr = err
 			logging.Errorf("Target %d (%s/%s) failed: %v", i, target.Provider, target.Model, err)
+			logging.Debugf("[FAILOVER] Falling back to next provider")
 			continue
 		}
 
@@ -228,9 +293,18 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request, req *an
 			}
 		}
 
-		// Track usage
+		// Track usage with actual provider-reported token counts
 		if h.usageTracker != nil {
-			h.usageTracker.Record(h.instanceID, routeName, successfulModel, h.estimateTokens(req), fallbackCount)
+			totalTokens := resp.Usage.InputTokens + resp.Usage.OutputTokens
+			// If provider doesn't return usage, fall back to estimate
+			if totalTokens == 0 {
+				totalTokens = h.estimateTokens(req)
+				logging.Warnf("[USAGE] Provider didn't return usage data, using estimate: %d tokens", totalTokens)
+			} else {
+				logging.Infof("[USAGE] Tracking actual usage: %d tokens (input=%d, output=%d)",
+					totalTokens, resp.Usage.InputTokens, resp.Usage.OutputTokens)
+			}
+			h.usageTracker.Record(h.instanceID, routeName, successfulModel, totalTokens, fallbackCount)
 		}
 
 		// Log response details
@@ -243,8 +317,12 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request, req *an
 		return
 	}
 
-	logging.Errorf("All providers failed for route: %s", routeName)
-	http.Error(w, "All providers failed", http.StatusBadGateway)
+	errorMsg := "All providers failed"
+	if lastErr != nil {
+		errorMsg = fmt.Sprintf("All providers failed: %v", lastErr)
+	}
+	logging.Errorf("All providers failed for route: %s, last error: %v", routeName, lastErr)
+	http.Error(w, errorMsg, http.StatusBadGateway)
 }
 
 // handleStreaming processes a streaming messages request.
@@ -275,14 +353,39 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, req *a
 
 	// Try each target with failover
 	for i, target := range targets {
-		if err := h.tryStreamingTarget(r.Context(), w, flusher, req, target); err != nil {
+		// FAILOVER LOGGING: Log attempt start with request details
+		logging.StreamDebugf("[FAILOVER] Streaming attempt %d with %s/%s, messages: %d", i, target.Provider, target.Model, len(req.Messages))
+		// Log thinking block count for debugging
+		for msgIdx, msg := range req.Messages {
+			thinkingCount := 0
+			for _, block := range msg.Content {
+				if block.Type == "thinking" {
+					thinkingCount++
+				}
+			}
+			if thinkingCount > 0 {
+				logging.StreamDebugf("[FAILOVER] Message[%d] has %d thinking blocks", msgIdx, thinkingCount)
+			}
+		}
+
+		totalTokens, err := h.tryStreamingTarget(r.Context(), w, flusher, req, target)
+		if err != nil {
 			logging.Streamf("Target %d (%s/%s) failed: %v", i, target.Provider, target.Model, err)
+			logging.StreamDebugf("[FAILOVER] Falling back to next provider")
 			continue
 		}
 
-		// Track usage on successful stream
+		// Track usage on successful stream with actual token counts
 		if h.usageTracker != nil {
-			h.usageTracker.Record(h.instanceID, routeName, target.Model, h.estimateTokens(req), i)
+			// Use actual total tokens if available, otherwise fall back to estimate
+			tokensToTrack := totalTokens
+			if tokensToTrack == 0 {
+				tokensToTrack = h.estimateTokens(req)
+				logging.Streamf("[USAGE] No usage data from stream, using estimate: %d tokens", tokensToTrack)
+			} else {
+				logging.Streamf("[USAGE] Tracking actual usage: %d tokens", tokensToTrack)
+			}
+			h.usageTracker.Record(h.instanceID, routeName, target.Model, tokensToTrack, i)
 		}
 		logging.Streamf("Stream completed with %s/%s, fallbacks: %d", target.Provider, target.Model, i)
 		return
@@ -331,10 +434,27 @@ func (h *Handler) tryTarget(ctx context.Context, req *anthropic.Request, target 
 		return nil, fmt.Errorf("client not found: %s", target.Provider)
 	}
 
-	// Transform request
-	httpReq, err := tf.TransformRequest(req, providerCfg.BaseURL, providerCfg.APIKey, target.Model)
+	// CRITICAL: Create deep copy before passing to transformer
+	// This prevents state corruption during failover when multiple providers
+	// are attempted sequentially with the same request object.
+	reqCopy, err := deepCopyRequest(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to copy request: %w", err)
+	}
+
+	// Prepare request: Anthropic -> Provider HTTP Request
+	httpReq, err := tf.PrepareRequest(reqCopy, providerCfg.BaseURL, providerCfg.APIKey, target.Model)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare request: %w", err)
+	}
+
+	// Log request details for debugging (with nil safety for httpReq and URL)
+	if httpReq != nil && httpReq.URL != nil {
+		logging.Debugf("[PROXY REQUEST] URL: %s, Method: %s, Headers: %v", httpReq.URL.String(), httpReq.Method, httpReq.Header)
+	} else if httpReq != nil {
+		logging.Debugf("[PROXY REQUEST] URL: <nil>, Method: %s, Headers: %v", httpReq.Method, httpReq.Header)
+	} else {
+		logging.Debugf("[PROXY REQUEST] URL: <nil>, Method: <nil>, Headers: <nil>")
 	}
 
 	// Send request
@@ -344,18 +464,38 @@ func (h *Handler) tryTarget(ctx context.Context, req *anthropic.Request, target 
 	}
 	defer resp.Body.Close()
 
-	// Transform response
-	return tf.TransformResponse(resp)
+	// Check for error responses before attempting to parse JSON
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		urlStr := "<nil>"
+		if httpReq != nil && httpReq.URL != nil {
+			urlStr = httpReq.URL.String()
+		}
+		// Log error summary at ERROR level
+		logging.Errorf("[PROXY ERROR] URL: %s, Status: %s", urlStr, resp.Status)
+		// Log full response body at DEBUG level to avoid log spam with large error responses
+		bodyStr := string(body)
+		if len(bodyStr) > 500 {
+			logging.Debugf("[PROXY ERROR] Response (first 500 chars): %s...", bodyStr[:500])
+		} else {
+			logging.Debugf("[PROXY ERROR] Response: %s", bodyStr)
+		}
+		return nil, fmt.Errorf("API error: %s - %s", resp.Status, bodyStr)
+	}
+
+	// Parse response: Provider Response -> Anthropic
+	return tf.ParseResponse(resp)
 }
 
 // tryStreamingTarget attempts to send a streaming request to a target provider.
-func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, req *anthropic.Request, target config.RouteTarget) error {
+// Returns the total tokens used (input + output) extracted from usage events, or 0 if unavailable.
+func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, req *anthropic.Request, target config.RouteTarget) (int, error) {
 	logging.Streamf("Starting stream to %s/%s", target.Provider, target.Model)
 
 	// Get provider config
 	providerCfg, ok := h.config.Providers[target.Provider]
 	if !ok {
-		return fmt.Errorf("provider not found: %s", target.Provider)
+		return 0, fmt.Errorf("provider not found: %s", target.Provider)
 	}
 
 	// Get transformer
@@ -370,35 +510,62 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 
 	// Check if transformer supports streaming
 	if !tf.SupportsStreaming() {
-		return fmt.Errorf("transformer does not support streaming")
+		return 0, fmt.Errorf("transformer does not support streaming")
 	}
 
 	// Get client
 	client, ok := h.providerClients[target.Provider]
 	if !ok {
-		return fmt.Errorf("client not found: %s", target.Provider)
+		return 0, fmt.Errorf("client not found: %s", target.Provider)
 	}
 
-	// Ensure stream flag is set
-	reqCopy := *req
+	// CRITICAL: Create deep copy before passing to transformer
+	// This prevents state corruption during failover when multiple providers
+	// are attempted sequentially with the same request object.
+	reqCopy, err := deepCopyRequest(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to copy request: %w", err)
+	}
 	reqCopy.Stream = true
 
-	// Transform request
-	httpReq, err := tf.TransformRequest(&reqCopy, providerCfg.BaseURL, providerCfg.APIKey, target.Model)
+	// Prepare request: Anthropic -> Provider HTTP Request
+	httpReq, err := tf.PrepareRequest(reqCopy, providerCfg.BaseURL, providerCfg.APIKey, target.Model)
 	if err != nil {
-		return err
+		return 0, fmt.Errorf("failed to prepare request: %w", err)
+	}
+
+	// Log request details for debugging (with nil safety for httpReq and URL)
+	if httpReq != nil && httpReq.URL != nil {
+		logging.StreamDebugf("[PROXY STREAM REQUEST] URL: %s, Method: %s", httpReq.URL.String(), httpReq.Method)
+	} else if httpReq != nil {
+		logging.StreamDebugf("[PROXY STREAM REQUEST] URL: <nil>, Method: %s", httpReq.Method)
+	} else {
+		logging.StreamDebugf("[PROXY STREAM REQUEST] URL: <nil>, Method: <nil>")
 	}
 
 	// Send request
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error: %s - %s", resp.Status, string(body))
+		urlStr := "<nil>"
+		if httpReq != nil && httpReq.URL != nil {
+			urlStr = httpReq.URL.String()
+		}
+		// Log error summary at INFO level
+		logging.Streamf("[PROXY STREAM ERROR] URL: %s, Status: %s", urlStr, resp.Status)
+		// Log full response body at DEBUG level to avoid log spam
+		bodyStr := string(body)
+		if len(bodyStr) > 500 {
+			logging.StreamDebugf("[PROXY STREAM ERROR] Response (first 500 chars): %s...", bodyStr[:500])
+		} else {
+			logging.StreamDebugf("[PROXY STREAM ERROR] Response: %s", bodyStr)
+		}
+		return 0, fmt.Errorf("API error: %s - %s", resp.Status, bodyStr)
 	}
 
 	// Read and forward SSE stream
@@ -408,24 +575,30 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 	scanner := NewSSEScanner(resp.Body)
 
 	eventCount := 0
+	var totalOutputTokens int
+	var totalInputTokens int
 	for scanner.Scan() {
 		eventCount++
 		eventType := scanner.Event()
 		data := scanner.Data()
 
+		// DEBUG: Log raw SSE event received from provider
+		logging.StreamDebugf("[RAW SSE] Event #%d - type: '%s', data: %s", eventCount, eventType, string(data))
+
 		// Filter out non-Anthropic events that some providers send (e.g., GLM's "ping")
 		if eventType == "ping" || eventType == "keepalive" {
-			logging.StreamDebugf("Filtering out non-Anthropic event: %s", eventType)
+			logging.StreamDebugf("[FILTER] Filtering out non-Anthropic event: %s", eventType)
 			continue
 		}
 
 		if len(data) == 0 {
+			logging.StreamDebugf("[FILTER] Skipping empty data event")
 			continue
 		}
 
 		// Validate JSON before processing
 		if !json.Valid(data) {
-			logging.StreamDebugf("Invalid JSON data from provider, skipping: %s", string(data))
+			logging.StreamDebugf("[FILTER] Invalid JSON data from provider, skipping: %s", string(data))
 			continue
 		}
 
@@ -435,20 +608,48 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 			Data:      data,
 		}
 
-		transformedEvents, err := tf.TransformSSEEvent(sseEvent)
+		transformedEvents, err := tf.TransformStreamEvent(sseEvent)
 		if err != nil {
-			logging.StreamDebugf("Transform error: %v", err)
+			logging.StreamDebugf("[TRANSFORM ERROR] Transform error: %v, raw data: %s", err, string(data))
 			continue
+		}
+
+		// Extract usage data from message_delta events
+		for _, te := range transformedEvents {
+			if te.EventType == "message_delta" {
+				// Parse the event to extract usage information
+				var eventData map[string]interface{}
+				if json.Unmarshal(te.Data, &eventData) == nil {
+					if usage, ok := eventData["usage"].(map[string]interface{}); ok {
+						// Extract output tokens (some providers send this)
+						if outputTokens, ok := usage["output_tokens"].(float64); ok {
+							totalOutputTokens += int(outputTokens)
+							logging.StreamDebugf("[USAGE] Accumulated output_tokens: %d (total: %d)", int(outputTokens), totalOutputTokens)
+						}
+						// Extract input tokens if provider sends it (e.g., GLM sends both in message_delta)
+						if inputTokens, ok := usage["input_tokens"].(float64); ok {
+							totalInputTokens = int(inputTokens)
+							logging.StreamDebugf("[USAGE] Provider sent input_tokens: %d (using actual instead of estimate)", totalInputTokens)
+						}
+					}
+				}
+			}
+		}
+
+		// DEBUG: Log transformed events
+		logging.StreamDebugf("[TRANSFORMED] %d event(s) produced from raw event", len(transformedEvents))
+		for i, te := range transformedEvents {
+			logging.StreamDebugf("[TRANSFORMED] Event #%d: type='%s', data=%s", i+1, te.EventType, string(te.Data))
 		}
 
 		// Write all transformed events
 		for _, te := range transformedEvents {
 			if len(te.Data) == 0 {
-				logging.StreamDebugf("Skipping empty event data, type: %s", te.EventType)
+				logging.StreamDebugf("[FILTER] Skipping empty event data, type: %s", te.EventType)
 				continue
 			}
 			if !json.Valid(te.Data) {
-				logging.StreamDebugf("Skipping invalid JSON event data, type: %s, data: %s", te.EventType, string(te.Data))
+				logging.StreamDebugf("[FILTER] Skipping invalid JSON event data, type: %s, data: %s", te.EventType, string(te.Data))
 				continue
 			}
 
@@ -458,7 +659,7 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 			for _, interceptor := range h.streamingInterceptors {
 				interceptedData, interceptorErr = interceptor.InterceptStreamingEvent(ctx, req, te.EventType, te.Data)
 				if interceptorErr != nil {
-					logging.StreamDebugf("Streaming interceptor error: %v", interceptorErr)
+					logging.StreamDebugf("[INTERCEPTOR ERROR] Streaming interceptor error: %v", interceptorErr)
 					// Continue with original data on interceptor error
 					interceptedData = te.Data
 				}
@@ -466,8 +667,32 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 
 			// Re-validate after interceptor processing
 			if !json.Valid(interceptedData) {
-				logging.StreamDebugf("Skipping invalid JSON after interceptor, type: %s", te.EventType)
+				logging.StreamDebugf("[FILTER] Skipping invalid JSON after interceptor, type: %s", te.EventType)
 				continue
+			}
+
+			// Semantic validation for critical event types to prevent
+			// "undefined is not an object" errors in client JavaScript
+			var parsedEvent map[string]any
+			if json.Unmarshal(interceptedData, &parsedEvent) == nil {
+				// Validate content_block_delta events
+				if te.EventType == "content_block_delta" || parsedEvent["type"] == "content_block_delta" {
+					if delta, ok := parsedEvent["delta"].(map[string]any); ok {
+						if deltaType, ok := delta["type"].(string); ok && deltaType == "text_delta" {
+							if _, hasText := delta["text"]; !hasText {
+								logging.StreamDebugf("[FILTER] Skipping text_delta event with missing text field, data: %s", string(interceptedData))
+								continue
+							}
+						}
+					}
+				}
+				// Validate content_block_stop has required index field
+				if te.EventType == "content_block_stop" || parsedEvent["type"] == "content_block_stop" {
+					if _, hasIndex := parsedEvent["index"]; !hasIndex {
+						logging.StreamDebugf("[FILTER] Skipping content_block_stop event with missing index field, data: %s", string(interceptedData))
+						continue
+					}
+				}
 			}
 
 			// Determine event format based on event type
@@ -479,10 +704,13 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 			w.Write(interceptedData)
 			w.Write([]byte("\n\n"))
 			flusher.Flush()
+
+			// DEBUG: Log successfully written event
+			logging.StreamDebugf("[WRITE] Successfully wrote event to client: type='%s', data: %s", te.EventType, string(interceptedData))
 		}
 	}
 
-	logging.Streamf("Stream completed with %d events processed", eventCount)
+	logging.Streamf("[STREAM SUMMARY] Stream completed with %d raw events processed, Input: %d, Output: %d", eventCount, totalInputTokens, totalOutputTokens)
 
 	if scanner.Err() != nil {
 		// Send message_stop before returning error to properly close the stream
@@ -498,11 +726,23 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 			w.Write([]byte("\n\n"))
 			flusher.Flush()
 		}
-		return scanner.Err()
+		return 0, scanner.Err()
 	}
 
-	logging.Streamf("Stream completed successfully")
-	return nil
+	// Calculate total tokens (use actual input if provider sent it, otherwise estimate)
+	// Note: Some providers (like GLM) send input_tokens in message_delta events
+	inputTokens := totalInputTokens
+	if inputTokens == 0 {
+		inputTokens = h.estimateTokens(req) // Fall back to estimate
+	}
+	totalTokens := inputTokens + totalOutputTokens
+	logging.Streamf("Stream completed successfully. Input: %d (%s), Output: %d, Total: %d",
+		inputTokens,
+		map[bool]string{true: "actual", false: "estimated"}[totalInputTokens > 0],
+		totalOutputTokens,
+		totalTokens)
+
+	return totalTokens, nil
 }
 
 func (h *Handler) estimateTokens(req *anthropic.Request) int {
@@ -595,4 +835,151 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleFilesAPI handles Files API endpoints.
+func (h *Handler) handleFilesAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Validate anthropic-beta header as per Files API spec
+	betaHeader := r.Header.Get("anthropic-beta")
+	if betaHeader == "" {
+		http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"Missing required header: anthropic-beta: "+FilesAPIBetaVersion}}`, http.StatusBadRequest)
+		return
+	}
+
+	// Check if the correct beta version is specified
+	// The header can contain multiple beta versions separated by commas
+	betaVersions := strings.Split(betaHeader, ",")
+	hasCorrectBeta := false
+	for _, v := range betaVersions {
+		if strings.TrimSpace(v) == FilesAPIBetaVersion {
+			hasCorrectBeta = true
+			break
+		}
+	}
+
+	if !hasCorrectBeta {
+		http.Error(w, `{"type":"error","error":{"type":"invalid_request_error","message":"Invalid beta version. Required: anthropic-beta: `+FilesAPIBetaVersion+`"}}`, http.StatusBadRequest)
+		return
+	}
+
+	// Extract file ID from path for operations that need it
+	fileID := strings.TrimPrefix(r.URL.Path, "/v1/files/")
+
+	switch r.Method {
+	case http.MethodPost:
+		// POST /v1/files - Upload file
+		if r.URL.Path == "/v1/files" {
+			h.handleFileUpload(w, r)
+		} else {
+			http.Error(w, "Not Found", http.StatusNotFound)
+		}
+
+	case http.MethodGet:
+		// GET /v1/files - List files
+		// GET /v1/files/{id} - Get file details
+		if fileID == "" || fileID == "/v1/files" {
+			h.handleFileList(w, r)
+		} else {
+			h.handleFileGet(w, r, fileID)
+		}
+
+	case http.MethodDelete:
+		// DELETE /v1/files/{id} - Delete file
+		if fileID != "" && fileID != "/v1/files" {
+			h.handleFileDelete(w, r, fileID)
+		} else {
+			http.Error(w, "Bad Request - file ID required", http.StatusBadRequest)
+		}
+
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleFileUpload handles file uploads.
+//
+// IMPORTANT: Claude Code does NOT use the Files API. These handlers exist only for
+// Anthropic API completeness. File storage and resolution are NOT implemented.
+//
+// Files API allows uploading files that can be referenced via file_id in document blocks.
+// Since Claude Code doesn't use this, file_id references in document blocks are not
+// resolved when routing to non-Anthropic providers (OpenAI, Gemini, etc.).
+func (h *Handler) handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	// MOCK IMPLEMENTATION - Returns fake response without storing anything
+	// This is sufficient for API completeness since Claude Code doesn't use Files API
+	response := anthropic.FileUploadResponse{
+		ID:           "file-" + generateID(),
+		Type:         "file",
+		CreatedAt:    time.Now(),
+		SizeBytes:    0,
+		Filename:     "uploaded_file",
+		MimeType:     "application/octet-stream",
+		Downloadable: false,
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleFileList handles listing files.
+//
+// NOTE: Claude Code does NOT use Files API. This returns an empty list.
+// File storage is not implemented.
+func (h *Handler) handleFileList(w http.ResponseWriter, r *http.Request) {
+	response := anthropic.FileListResponse{
+		Object:  "list",
+		Data:    []anthropic.FileObject{}, // Empty - no file storage implemented
+		HasMore: false,
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleFileGet handles getting file details.
+//
+// NOTE: Claude Code does NOT use Files API. This returns mock data.
+// File storage is not implemented.
+func (h *Handler) handleFileGet(w http.ResponseWriter, r *http.Request, fileID string) {
+	// MOCK IMPLEMENTATION - Returns fake data without looking up anything
+	response := anthropic.FileObject{
+		ID:           fileID,
+		Type:         "file",
+		CreatedAt:    time.Now(),
+		SizeBytes:    0,
+		Filename:     "example.pdf",
+		MimeType:     "application/pdf",
+		Downloadable: false,
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleFileDelete handles file deletion.
+//
+// NOTE: Claude Code does NOT use Files API. This returns success without doing anything.
+// File storage is not implemented.
+func (h *Handler) handleFileDelete(w http.ResponseWriter, r *http.Request, fileID string) {
+	// MOCK IMPLEMENTATION - Returns success without deleting anything
+	response := anthropic.FileDeleteResponse{
+		ID:      fileID,
+		Type:    "file",
+		Deleted: true,
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// generateID generates a random ID for files.
+func generateID() string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 24)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
 }

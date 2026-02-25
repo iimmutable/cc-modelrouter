@@ -130,20 +130,18 @@ type mockTransformer struct {
 
 func (m *mockTransformer) Name() string { return m.name }
 
-func (m *mockTransformer) TransformRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
+func (m *mockTransformer) Endpoint() string { return "/" }
+
+func (m *mockTransformer) PrepareRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
 	return nil, nil
 }
 
-func (m *mockTransformer) TransformResponse(resp *http.Response) (*anthropic.Response, error) {
+func (m *mockTransformer) ParseResponse(resp *http.Response) (*anthropic.Response, error) {
 	return nil, nil
 }
 
 func (m *mockTransformer) SupportsStreaming() bool { return false }
 
-func (m *mockTransformer) TransformSSEEvent(event *SSEEvent) ([]SSEEvent, error) {
-	return nil, nil
-}
-
-func (m *mockTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
+func (m *mockTransformer) TransformStreamEvent(event *SSEEvent) ([]SSEEvent, error) {
 	return nil, nil
 }

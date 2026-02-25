@@ -503,23 +503,22 @@ func TestHandler_SendStreamingError_Format(t *testing.T) {
 }
 
 // streamingTransformer is a mock transformer that supports streaming
+// streamingTransformer is a mock transformer that supports streaming
 type streamingTransformer struct{}
 
-func (m *streamingTransformer) Name() string                               { return "streaming" }
-func (m *streamingTransformer) TransformRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
+func (m *streamingTransformer) Name() string { return "streaming" }
+func (m *streamingTransformer) Endpoint() string { return "/v1/chat/completions" }
+func (m *streamingTransformer) PrepareRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
 	return nil, nil
 }
-func (m *streamingTransformer) TransformResponse(resp *http.Response) (*anthropic.Response, error) {
+func (m *streamingTransformer) ParseResponse(resp *http.Response) (*anthropic.Response, error) {
 	return &anthropic.Response{}, nil
 }
 func (m *streamingTransformer) SupportsStreaming() bool {
 	return true
 }
-func (m *streamingTransformer) TransformSSEEvent(event *transformer.SSEEvent) ([]transformer.SSEEvent, error) {
+func (m *streamingTransformer) TransformStreamEvent(event *transformer.SSEEvent) ([]transformer.SSEEvent, error) {
 	return []transformer.SSEEvent{*event}, nil
-}
-func (m *streamingTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
-	return chunk, nil
 }
 
 func TestHandler_StreamingInterceptorCalled(t *testing.T) {

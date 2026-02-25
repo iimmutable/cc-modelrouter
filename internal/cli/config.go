@@ -187,7 +187,7 @@ func runConfigInit(cmd *cobra.Command, args []string) error {
 				APIKey:      "${OPENROUTER_API_KEY}",
 				BaseURL:     "https://openrouter.ai/api",
 				Models:      []string{"anthropic/claude-sonnet-4"},
-				Transformer: "openrouter",
+				Transformer: "anthropic",
 			},
 		},
 		Router: config.RouterConfig{

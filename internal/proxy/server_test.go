@@ -546,23 +546,20 @@ func (m *serverTestMockTransformerRegistry) Get(name string) (transformer.Transf
 
 type serverTestAnthropicTransformer struct{}
 
-func (m *serverTestAnthropicTransformer) Name() string                               { return "anthropic" }
-func (m *serverTestAnthropicTransformer) TransformRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
+func (m *serverTestAnthropicTransformer) Name() string { return "anthropic" }
+func (m *serverTestAnthropicTransformer) Endpoint() string { return "/v1/messages" }
+func (m *serverTestAnthropicTransformer) PrepareRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
 	return nil, nil
 }
-func (m *serverTestAnthropicTransformer) TransformResponse(resp *http.Response) (*anthropic.Response, error) {
+func (m *serverTestAnthropicTransformer) ParseResponse(resp *http.Response) (*anthropic.Response, error) {
 	return &anthropic.Response{}, nil
 }
 func (m *serverTestAnthropicTransformer) SupportsStreaming() bool {
 	return false
 }
-func (m *serverTestAnthropicTransformer) TransformSSEEvent(event *transformer.SSEEvent) ([]transformer.SSEEvent, error) {
+func (m *serverTestAnthropicTransformer) TransformStreamEvent(event *transformer.SSEEvent) ([]transformer.SSEEvent, error) {
 	return nil, nil
 }
-func (m *serverTestAnthropicTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
-	return chunk, nil
-}
-
 type serverTestMockUsageTracker struct{}
 
 func (t *serverTestMockUsageTracker) Record(instanceID, route, model string, tokens, fallbacks int) {}

@@ -1,0 +1,11 @@
+{
+  "model": "gemini-2.0-flash-exp",
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {"text": "Hello, how are you?"}
+      ]
+    }
+  ]
+}

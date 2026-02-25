@@ -3,7 +3,6 @@ package logging
 
 import (
 	"bytes"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +22,7 @@ func TestInitDefaultConfig(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	log.Println("test message")
+	Infof("test message")
 
 	if cleanup != nil {
 		cleanup()
@@ -42,7 +41,7 @@ func TestInitStdout(t *testing.T) {
 	}
 	defer cleanup()
 
-	log.Println("test to stdout")
+	Infof("test to stdout")
 }
 
 func TestInitStderr(t *testing.T) {
@@ -57,7 +56,7 @@ func TestInitStderr(t *testing.T) {
 	}
 	defer cleanup()
 
-	log.Println("test to stderr")
+	Infof("test to stderr")
 }
 
 func TestInitWithFilePath(t *testing.T) {
@@ -75,7 +74,8 @@ func TestInitWithFilePath(t *testing.T) {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	log.Println("test message to file")
+	// Use the logging package's Infof, not standard library's log.Println
+	Infof("test message to file")
 
 	if cleanup != nil {
 		cleanup()
@@ -101,7 +101,8 @@ func TestInitWithPath(t *testing.T) {
 		t.Fatalf("InitWithPath failed: %v", err)
 	}
 
-	log.Println("test message")
+	// Use the logging package's Infof, not standard library's log.Println
+	Infof("test message")
 
 	if cleanup != nil {
 		cleanup()
@@ -286,21 +287,26 @@ func TestInitWithLevel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 
-			// Save original log output
-			originalLogOutput := log.Writer()
-			defer log.SetOutput(originalLogOutput)
-
-			// Set log output to buffer for this test
-			log.SetOutput(&buf)
+			// Save original logger output
+			originalLogger := GetLogger()
+			originalOutput := originalLogger.Out
+			defer originalLogger.SetOutput(originalOutput)
 
 			// Set the log level by calling Init with a minimal config
+			// Init handles both currentLevel and logrus level
 			cfg := &config.LoggingConfig{
 				Enabled:     true,
 				Destination: "stdout",
 				Level:       tt.level,
 			}
-			level := int64(cfg.GetLevel())
-			currentLevel.Store(level)
+			cleanup, err := Init(cfg)
+			if err != nil {
+				t.Fatalf("Init failed: %v", err)
+			}
+			defer cleanup()
+
+			// Set logger output to buffer AFTER Init, so it overrides the destination
+			originalLogger.SetOutput(&buf)
 
 			// Log at all levels
 			Debugf("debug message")
@@ -325,10 +331,10 @@ func TestInitWithLevel(t *testing.T) {
 				t.Error("Did not expect info message in output")
 			}
 
-			if tt.shouldLogWarn && !strings.Contains(output, "[WARN]") {
+			if tt.shouldLogWarn && !strings.Contains(output, "[WARNING]") {
 				t.Error("Expected warn message in output")
 			}
-			if !tt.shouldLogWarn && strings.Contains(output, "[WARN]") {
+			if !tt.shouldLogWarn && strings.Contains(output, "[WARNING]") {
 				t.Error("Did not expect warn message in output")
 			}
 

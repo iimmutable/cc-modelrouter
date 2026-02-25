@@ -58,12 +58,14 @@ Project configuration **completely overrides** global configuration when present
 ```json
 {
   "providers": {
-    "openrouter": {
+    "openrouter-anthropic": {
       "apiKey": "${OPENROUTER_API_KEY}",
-      "baseURL": "https://openrouter.ai/api/v1",
+      "baseURL": "https://openrouter.ai/api",
+      "transformer": "openrouter",
       "models": [
-        "anthropic/claude-sonnet-4",
-        "google/gemini-2.5-pro"
+        "anthropic/claude-haiku-4.5",
+        "anthropic/claude-sonnet-4.5",
+        "anthropic/claude-opus-4.5"
       ]
     }
   }
@@ -75,23 +77,80 @@ Project configuration **completely overrides** global configuration when present
 | `apiKey` | string | Yes | API key (supports env vars) |
 | `baseURL` | string | Yes | API base URL |
 | `models` | []string | Yes | List of available models |
+| `transformer` | string | No | Transformer name (defaults to provider name) |
+| `timeout` | string | No | HTTP timeout (e.g., "60s", "90s") |
 
 ### Supported Providers
 
 #### OpenRouter
 
+OpenRouter provides a **unified Anthropic-compatible API** for all models (Claude, Gemini, OpenAI, etc.). The `openrouter` transformer handles signature preservation required by OpenRouter's validation.
+
+**Provider Configuration:**
+
 ```json
 {
-  "openrouter": {
+  "openrouter-anthropic": {
     "apiKey": "${OPENROUTER_API_KEY}",
-    "baseURL": "https://openrouter.ai/api/v1",
-    "models": ["anthropic/claude-sonnet-4"]
+    "baseURL": "https://openrouter.ai/api",
+    "transformer": "openrouter",
+    "models": ["anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.5"],
+    "timeout": "60s"
   }
 }
 ```
 
-- **Transformer**: `openrouter` (OpenAI-compatible)
-- **Auth**: `Authorization: Bearer <key>`
+- **Endpoint**: `https://openrouter.ai/api` + `/v1/messages`
+- **Transformer**: `openrouter` (preserves signature fields for thinking blocks)
+- **Auth**: `x-api-key: <key>`
+- **Supported Models**: Anthropic Claude models (`anthropic/*`)
+- **Purpose**: Claude models with extended thinking support
+
+**For non-Anthropic models** (Google Gemini, OpenAI, etc.):
+
+```json
+{
+  "openrouter-openai": {
+    "apiKey": "${OPENROUTER_API_KEY}",
+    "baseURL": "https://openrouter.ai/api",
+    "transformer": "openrouter",
+    "models": ["google/gemini-2.5-flash", "google/gemini-2.5-pro"],
+    "timeout": "60s"
+  }
+}
+```
+
+- **Endpoint**: `https://openrouter.ai/api` + `/v1/messages` (same as above)
+- **Transformer**: `openrouter` (same as above)
+- **Auth**: `x-api-key: <key>` (same as above)
+- **Supported Models**: Google, OpenAI, and other models
+- **Purpose**: Non-Anthropic models (logical separation only)
+
+**Note**: The provider split (`openrouter-anthropic` vs `openrouter-openai`) is for **logical organization** only. Both use the same API endpoint and transformer. The split allows you to group models by type in your routes, but there's no technical difference in how they're handled.
+
+**Why `openrouter` transformer?**
+- OpenRouter's API requires the `signature` field to be present in thinking blocks (even when empty)
+- The `anthropic` transformer strips empty signatures, causing 400 errors
+- The `openrouter` transformer preserves signatures by setting them to `" "`
+
+**Using a single provider alternative:**
+If you prefer, you can combine all OpenRouter models into a single provider:
+```json
+{
+  "openrouter": {
+    "apiKey": "${OPENROUTER_API_KEY}",
+    "baseURL": "https://openrouter.ai/api",
+    "transformer": "openrouter",
+    "models": [
+      "anthropic/claude-haiku-4.5",
+      "anthropic/claude-sonnet-4.5",
+      "anthropic/claude-opus-4.5",
+      "google/gemini-2.5-flash",
+      "google/gemini-2.5-pro"
+    ]
+  }
+}
+```
 
 #### Google Gemini
 
@@ -114,14 +173,14 @@ Project configuration **completely overrides** global configuration when present
 {
   "qwen": {
     "apiKey": "${DASHSCOPE_API_KEY}",
-    "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
     "models": ["qwen-turbo", "qwen-plus"]
   }
 }
 ```
 
-- **Transformer**: `qwen` (OpenAI-compatible)
-- **Auth**: `Authorization: Bearer <key>`
+- **Transformer**: `anthropic` (Anthropic-compatible)
+- **Auth**: `x-api-key: <key>`
 
 #### Zhipu GLM (BigModel)
 
@@ -135,8 +194,8 @@ Project configuration **completely overrides** global configuration when present
 }
 ```
 
-- **Transformer**: `glm` (Anthropic-compatible)
-- **Auth**: `Authorization: Bearer <key>`
+- **Transformer**: `anthropic` (Anthropic-compatible)
+- **Auth**: `x-api-key: <key>`
 
 #### Anthropic (Direct)
 
@@ -247,9 +306,10 @@ Use `${VAR_NAME}` or `$VAR_NAME` syntax for secure value injection:
 ```json
 {
   "providers": {
-    "openrouter": {
+    "openrouter-anthropic": {
       "apiKey": "${OPENROUTER_API_KEY}",
-      "baseURL": "https://openrouter.ai/api/v1"
+      "baseURL": "https://openrouter.ai/api",
+      "transformer": "openrouter"
     }
   }
 }
@@ -276,38 +336,44 @@ export BIGMODEL_API_KEY="..."
     "bigmodel": {
       "apiKey": "${BIGMODEL_API_KEY}",
       "baseURL": "https://open.bigmodel.cn/api/anthropic",
-      "models": ["glm-4.7", "glm-4.5-air", "glm-4.6v"]
+      "models": ["glm-4.7", "glm-4.5-air", "glm-4.6v"],
+      "transformer": "glm-anthropic",
+      "timeout": "90s"
     },
-    "openrouter": {
+    "openrouter-anthropic": {
       "apiKey": "${OPENROUTER_API_KEY}",
-      "baseURL": "https://openrouter.ai/api/v1",
-      "models": [
-        "anthropic/claude-sonnet-4",
-        "anthropic/claude-opus-4",
-        "google/gemini-2.5-pro"
-      ]
+      "baseURL": "https://openrouter.ai/api",
+      "models": ["anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.5"],
+      "transformer": "openrouter",
+      "timeout": "60s"
+    },
+    "openrouter-openai": {
+      "apiKey": "${OPENROUTER_API_KEY}",
+      "baseURL": "https://openrouter.ai/api",
+      "models": ["google/gemini-2.5-flash", "google/gemini-2.5-pro"],
+      "transformer": "openrouter",
+      "timeout": "60s"
     },
     "gemini": {
       "apiKey": "${GEMINI_API_KEY}",
       "baseURL": "https://generativelanguage.googleapis.com/v1beta",
       "models": ["gemini-2.5-pro", "gemini-2.0-flash"]
     },
-    "qwen": {
-      "apiKey": "${DASHSCOPE_API_KEY}",
-      "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "models": ["qwen-turbo", "qwen-plus"]
+    "aliyun": {
+      "apiKey": "${ALIYUN_API_KEY}",
+      "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+      "models": ["glm-5", "glm-4.7", "MiniMax-M2.5"],
+      "transformer": "glm-anthropic",
+      "timeout": "120s"
     }
   },
   "router": {
     "routes": {
-      "default": "bigmodel:glm-4.7;openrouter:anthropic/claude-sonnet-4",
-      "background": "bigmodel:glm-4.5-air",
-      "think": "openrouter:anthropic/claude-sonnet-4",
-      "thinkMore": "openrouter:anthropic/claude-sonnet-4",
-      "ultrathink": "openrouter:anthropic/claude-opus-4",
-      "longContext": "gemini:gemini-2.5-pro;openrouter:google/gemini-2.5-pro",
-      "webSearch": "gemini:gemini-2.5-pro",
-      "image": "bigmodel:glm-4.6v;gemini:gemini-2.5-pro"
+      "default": "bigmodel:glm-4.7;aliyun:glm-4.7;openrouter-anthropic:anthropic/claude-sonnet-4.5",
+      "background": "bigmodel:glm-4.5-air;aliyun:glm-4.5-air;openrouter-openai:google/gemini-2.5-flash;openrouter-anthropic:anthropic/claude-haiku-4.5",
+      "think": "bigmodel:glm-4.7;aliyun:glm-4.7;openrouter-anthropic:anthropic/claude-sonnet-4.5",
+      "thinkMore": "aliyun:glm-5;openrouter-anthropic:anthropic/claude-opus-4.5",
+      "longContext": "aliyun:glm-5;openrouter-openai:google/gemini-2.5-pro"
     },
     "maxRetries": 2,
     "retryDelay": "500ms"

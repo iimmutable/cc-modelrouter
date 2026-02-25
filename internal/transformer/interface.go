@@ -15,25 +15,30 @@ type SSEEvent struct {
 	Data []byte
 }
 
-// Transformer transforms requests and responses between Anthropic format and provider format.
+// Provider represents a provider configuration (deprecated, for backward compatibility).
+type Provider struct {
+	BaseURL string
+	APIKey  string
+	Model   string
+}
+
+// Transformer transforms between Anthropic and provider formats.
 type Transformer interface {
 	// Name returns the transformer name.
 	Name() string
 
-	// TransformRequest converts an Anthropic request to a provider-specific HTTP request.
-	TransformRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error)
+	// Endpoint returns the API endpoint path.
+	Endpoint() string
 
-	// TransformResponse converts a provider response to Anthropic format.
-	TransformResponse(resp *http.Response) (*anthropic.Response, error)
+	// PrepareRequest converts Anthropic request to provider HTTP request.
+	PrepareRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error)
 
-	// SupportsStreaming returns true if this transformer supports streaming.
+	// ParseResponse converts provider HTTP response to Anthropic response.
+	ParseResponse(resp *http.Response) (*anthropic.Response, error)
+
+	// SupportsStreaming returns true if transformer supports streaming.
 	SupportsStreaming() bool
 
-	// TransformSSEEvent transforms a provider SSE event to one or more Anthropic SSE events.
-	// Returns a slice of SSE events in Anthropic format.
-	TransformSSEEvent(event *SSEEvent) ([]SSEEvent, error)
-
-	// TransformStreamChunk transforms a streaming chunk to Anthropic format.
-	// Deprecated: Use TransformSSEEvent for proper SSE event handling.
-	TransformStreamChunk(chunk []byte, eventType string) ([]byte, error)
+	// TransformStreamEvent converts provider SSE event to Anthropic SSE events.
+	TransformStreamEvent(event *SSEEvent) ([]SSEEvent, error)
 }

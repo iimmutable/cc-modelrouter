@@ -17,6 +17,7 @@ import (
 	"github.com/iimmutable/cc-modelrouter/internal/proxy"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
+	transformers "github.com/iimmutable/cc-modelrouter/internal/transformer/transformers"
 )
 
 // TestIntegrationStreamingSSE tests that the streaming handler properly
@@ -148,7 +149,7 @@ func TestIntegrationStreamingSSE(t *testing.T) {
 
 	// Initialize components
 	registry := transformer.NewRegistry()
-	registry.Register(transformer.NewAnthropicTransformer())
+	registry.Register(transformers.NewAnthropicTransformer())
 
 	// Create HTTP client
 	clients := map[string]proxy.HTTPClient{

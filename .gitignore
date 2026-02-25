@@ -18,6 +18,10 @@
 # Go workspace
 go.work
 
+# Go cache
+.gocache/
+.mod-cache/
+
 # IDE
 .idea/
 .vscode/
@@ -31,3 +35,11 @@ go.work
 # Debug log files
 debug.log
 *.log
+
+# Node.js (auxiliary tooling only)
+node_modules/
+package-lock.json
+package.json
+
+# Git worktrees (isolated workspaces)
+.worktrees/

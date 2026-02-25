@@ -26,8 +26,13 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Interpolate environment variables
-	expanded := interpolateEnvVars(string(data))
+	// Interpolate environment variables and get warnings
+	expanded, warnings := interpolateEnvVars(string(data))
+
+	// Print warnings for missing environment variables
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
+	}
 
 	cfg := Defaults()
 	if err := json.Unmarshal([]byte(expanded), cfg); err != nil {
@@ -82,8 +87,10 @@ func Save(cfg *Config, path string) error {
 }
 
 // interpolateEnvVars replaces ${VAR} and $VAR with environment variable values.
-func interpolateEnvVars(s string) string {
+// Returns the expanded string and a list of warnings for missing environment variables.
+func interpolateEnvVars(s string) (string, []string) {
 	result := s
+	var warnings []string
 
 	// Replace ${VAR} patterns
 	for {
@@ -99,6 +106,9 @@ func interpolateEnvVars(s string) string {
 
 		varName := result[start+2 : end]
 		varValue := os.Getenv(varName)
+		if varValue == "" {
+			warnings = append(warnings, fmt.Sprintf("environment variable '%s' is not set", varName))
+		}
 		result = result[:start] + varValue + result[end+1:]
 	}
 
@@ -112,9 +122,11 @@ func interpolateEnvVars(s string) string {
 			varValue := os.Getenv(varName)
 			if varValue != "" {
 				result = strings.ReplaceAll(result, word, varValue)
+			} else {
+				warnings = append(warnings, fmt.Sprintf("environment variable '%s' is not set", varName))
 			}
 		}
 	}
 
-	return result
+	return result, warnings
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/iimmutable/cc-modelrouter/internal/config"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
+	transformers "github.com/iimmutable/cc-modelrouter/internal/transformer/transformers"
 )
 
 func TestNewRouterAdapter(t *testing.T) {
@@ -89,7 +90,7 @@ func TestNewRegistryAdapter(t *testing.T) {
 func TestRegistryAdapter_Get_Success(t *testing.T) {
 	// Use the real transformer registry with a real transformer
 	realRegistry := transformer.NewRegistry()
-	realRegistry.Register(transformer.NewAnthropicTransformer())
+	realRegistry.Register(transformers.NewAnthropicTransformer())
 	adapter := NewRegistryAdapter(realRegistry)
 
 	result, err := adapter.Get("anthropic")
@@ -118,7 +119,7 @@ func TestRegistryAdapter_Get_NotFound(t *testing.T) {
 
 func TestRegistryAdapter_Get_ReturnsTransformer(t *testing.T) {
 	realRegistry := transformer.NewRegistry()
-	realRegistry.Register(transformer.NewAnthropicTransformer())
+	realRegistry.Register(transformers.NewAnthropicTransformer())
 	adapter := NewRegistryAdapter(realRegistry)
 
 	result, err := adapter.Get("anthropic")

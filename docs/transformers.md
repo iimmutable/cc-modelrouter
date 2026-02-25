@@ -374,5 +374,222 @@ internal/transformer/
 ├── openrouter.go       # OpenRouter transformer
 ├── gemini.go           # Gemini transformer
 ├── qwen.go             # Qwen transformer
-└── glm.go              # GLM transformer
+├── glm_anthropic.go    # GLM Anthropic transformer
+└── transformers/       # Transformer implementations
+    ├── anthropic.go
+    ├── openrouter.go
+    ├── glm_anthropic.go
+    └── ...
+```
+
+---
+
+## Thinking Block Handling (CRITICAL)
+
+### Overview
+
+Thinking blocks are a special content block type used by Anthropic's extended thinking feature. Different providers have different validation requirements for thinking blocks, making correct handling critical.
+
+### Provider Signature Requirements
+
+| Provider | Signature Requirement | Notes |
+|----------|---------------------|-------|
+| **Direct Anthropic API** | Omit when empty | Rejects whitespace-only signatures like `" "` |
+| **OpenRouter Anthropic models** | Must be present | Requires field even if empty string |
+| **GLM providers (Aliyun, BigModel)** | Must be present | Accepts empty string value |
+| **Other OpenRouter models** | Must be present | Accepts empty or whitespace values |
+
+### The Signature Field Problem
+
+The `ContentBlock.Signature` field has conflicting requirements:
+- **Omit** the field for direct Anthropic API (or get 400 error)
+- **Include** the field for OpenRouter Anthropic models (or get 400 error)
+
+With a plain `string` type, we cannot distinguish between:
+1. "Omit this field from JSON"
+2. "Include this field with empty string value"
+
+**Current Implementation (Bug):**
+```go
+type ContentBlock struct {
+    Signature string `json:"signature,omitempty"`
+}
+```
+
+When `Signature = ""`, the `omitempty` tag omits the field, causing OpenRouter to see it as "undefined".
+
+**Required Fix:**
+```go
+type ContentBlock struct {
+    Signature *string `json:"signature,omitempty"`
+}
+```
+
+This allows:
+- `nil` → omit field (for Anthropic API)
+- `&""` → include empty string (for OpenRouter)
+- `&"value"` → include actual value
+
+### Content Normalization
+
+**User Messages with Thinking Blocks:**
+- Claude Code may resend previous assistant responses as user messages
+- These can contain thinking blocks that need conversion
+- **Solution:** Convert thinking blocks to text blocks wrapped in `<thinking>` tags
+
+**Assistant Messages with Single Thinking Blocks:**
+- Some providers reject single-element arrays for content
+- **Solution:** Add a minimal text block with single space to make it multi-element
+
+**Failover State Corruption:**
+- Transformers must deep copy requests before modification
+- Otherwise, modifications affect subsequent provider attempts
+- **Solution:** JSON marshal/unmarshal to create independent copies
+
+### Transformer-Specific Handling
+
+#### AnthropicTransformer
+```go
+// Strip whitespace-only signatures (omit field)
+if strings.TrimSpace(signature) == "" {
+    signature = ""  // Will be omitted by MarshalJSON
+}
+// Do NOT normalize single thinking blocks (Anthropic accepts them)
+```
+
+#### OpenRouterTransformer
+
+**CRITICAL: OpenRouter requires different handling than direct Anthropic API**
+
+```go
+// CRITICAL: Always normalize thinking blocks for OpenRouter
+// Both Anthropic and non-Anthropic models via OpenRouter require multi-element arrays
+// to prevent "expected string, received array" validation errors
+normalizeThinkingBlockMessages(&reqCopy)
+
+// Handle signatures based on target model
+// OpenRouter Anthropic models require signature field to be PRESENT (not omitted)
+// Existing signatures from previous provider responses MUST be cleared
+if isAnthropicModel {
+    // Always clear signature for OpenRouter Anthropic models
+    // Setting to empty string ensures the field is present (required by OpenRouter)
+    // Clears any existing signature from previous provider responses (GLM, OpenAI, etc.)
+    if signature == nil || isWhitespacePtr(signature) {
+        signature = strPtr("")  // Include empty string
+    }
+} else {
+    // Non-Anthropic models: ensure signature field is present
+    if signature == nil || isWhitespacePtr(signature) {
+        signature = strPtr("")  // Include empty string
+    }
+}
+```
+
+**Key Differences from Direct Anthropic API:**
+
+1. **Content Normalization:**
+   - Direct Anthropic API: Accepts single thinking blocks without normalization
+   - OpenRouter (all models): **Requires normalization** - single thinking blocks cause validation errors
+
+2. **Signature Handling:**
+   - Direct Anthropic API: Omit signature field when empty (set to `nil`)
+   - OpenRouter Anthropic: Include signature field even when empty (set to `&""`)
+
+3. **Failover Scenarios:**
+   - When GLM or other providers return thinking blocks in assistant messages
+   - These messages are sent to OpenRouter during failover
+   - OpenRouter's strict validation rejects the single-element array format
+   - Normalization adds a text block, creating a valid multi-element array
+
+#### GLMAnthropicTransformer
+```go
+// Always include signature field
+if signature == nil {
+    signature = strPtr("")  // Include empty string
+}
+// Normalize thinking blocks
+normalizeThinkingBlockMessages(&reqCopy)
+```
+
+### Testing Thinking Block Handling
+
+```go
+// Test case: OpenRouter Anthropic model with thinking block
+req := &anthropic.Request{
+    Messages: []anthropic.Message{
+        {
+            Role: "assistant",
+            Content: anthropic.MessageContent{
+                {Type: "thinking", Thinking: "..."},
+            },
+        },
+    },
+}
+
+// After transformer processing:
+// - Signature should be &"" (include empty string)
+// - Content should remain single-element array (no normalization)
+// - JSON should include "signature": ""
+```
+
+---
+
+## Common Transformer Pitfalls
+
+### 1. Modifying Requests In-Place
+
+**Wrong:**
+```go
+func (t *MyTransformer) PrepareRequest(req *anthropic.Request, ...) {
+    req.Messages[0].Content = append(req.Messages[0].Content, newBlock)
+    // This modifies the original request!
+}
+```
+
+**Right:**
+```go
+func (t *MyTransformer) PrepareRequest(req *anthropic.Request, ...) {
+    var reqCopy anthropic.Request
+    json.Unmarshal(json.Marshal(req), &reqCopy)
+    reqCopy.Messages[0].Content = append(...)
+    // Work with copy
+}
+```
+
+### 2. Not Handling Provider-Specific Validation
+
+**Wrong:**
+```go
+// Treat all providers the same
+if block.Type == "thinking" {
+    block.Signature = ""  // Will be omitted - breaks OpenRouter!
+}
+```
+
+**Right:**
+```go
+// Handle provider-specific requirements
+if isAnthropicModel {
+    block.Signature = nil  // Omit for Anthropic API
+} else {
+    block.Signature = strPtr("")  // Include for others
+}
+```
+
+### 3. Forgetting to Set GetBody for HTTP Requests
+
+**Wrong:**
+```go
+httpReq, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+// Body can only be read once - retries will fail!
+```
+
+**Right:**
+```go
+bodyCopy := make([]byte, len(body))
+copy(bodyCopy, body)
+httpReq, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+httpReq.GetBody = func() (io.ReadCloser, error) {
+    return io.NopCloser(bytes.NewReader(bodyCopy)), nil
+}
 ```

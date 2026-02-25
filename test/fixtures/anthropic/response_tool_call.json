@@ -1,0 +1,21 @@
+{
+  "id": "msg_xyz789",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_abc123",
+      "name": "get_weather",
+      "input": {
+        "location": "San Francisco"
+      }
+    }
+  ],
+  "model": "claude-3-5-sonnet-20241022",
+  "stop_reason": "tool_use",
+  "usage": {
+    "input_tokens": 25,
+    "output_tokens": 15
+  }
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/iimmutable/cc-modelrouter/internal/proxy"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
+	transformers "github.com/iimmutable/cc-modelrouter/internal/transformer/transformers"
 	"github.com/iimmutable/cc-modelrouter/internal/usage"
 	"github.com/spf13/cobra"
 )
@@ -179,16 +181,28 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	// Setup transformer registry
 	registry := transformer.NewRegistry()
-	registry.Register(transformer.NewAnthropicTransformer())
-	registry.Register(transformer.NewOpenRouterTransformer())
-	registry.Register(transformer.NewGeminiTransformer())
-	registry.Register(transformer.NewQwenTransformer())
-	registry.Register(transformer.NewGLMTransformer())
+	// New transformers (Anthropic-centric interface)
+	registry.Register(transformers.NewAnthropicTransformer())
+	registry.Register(transformers.NewGLMAnthropicTransformer())
+	registry.Register(transformers.NewOpenRouterTransformer())
+	registry.Register(transformers.NewOpenAITransformer())
+	registry.Register(transformers.NewGeminiTransformer())
+	// Note: Qwen and MiniMax now use the Anthropic transformer since they are Anthropic-compatible
+	// GLM providers (aliyun, bigmodel) use the GLM-specific transformer which ensures signature field handling
+	// OpenRouter providers use the OpenRouter-specific transformer which preserves signature fields
 	server.SetTransformerRegistry(NewRegistryAdapter(registry))
 
 	// Setup provider clients
 	clients := make(map[string]proxy.HTTPClient)
 	for name, providerCfg := range cfg.Providers {
+		// Validate API key is not empty or unset
+		if providerCfg.APIKey == "" {
+			return fmt.Errorf("provider %s: API key is empty (check environment variable)", name)
+		}
+		if strings.HasPrefix(providerCfg.APIKey, "${") {
+			return fmt.Errorf("provider %s: API key environment variable not set: %s", name, providerCfg.APIKey)
+		}
+
 		client, err := provider.NewClient(&provider.ClientConfig{
 			BaseURL:    providerCfg.BaseURL,
 			APIKey:     providerCfg.APIKey,

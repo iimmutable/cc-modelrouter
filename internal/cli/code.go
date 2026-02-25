@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/iimmutable/cc-modelrouter/internal/proxy"
 	"github.com/iimmutable/cc-modelrouter/internal/router"
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
+	transformers "github.com/iimmutable/cc-modelrouter/internal/transformer/transformers"
+	"github.com/iimmutable/cc-modelrouter/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -163,16 +166,28 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 	// Setup transformer registry
 	registry := transformer.NewRegistry()
-	registry.Register(transformer.NewAnthropicTransformer())
-	registry.Register(transformer.NewOpenRouterTransformer())
-	registry.Register(transformer.NewGeminiTransformer())
-	registry.Register(transformer.NewQwenTransformer())
-	registry.Register(transformer.NewGLMTransformer())
+	// New transformers (Anthropic-centric interface)
+	registry.Register(transformers.NewAnthropicTransformer())
+	registry.Register(transformers.NewGLMAnthropicTransformer())
+	registry.Register(transformers.NewOpenRouterTransformer())
+	registry.Register(transformers.NewOpenAITransformer())
+	registry.Register(transformers.NewGeminiTransformer())
+	// Note: Qwen and MiniMax now use the Anthropic transformer since they are Anthropic-compatible
+	// GLM providers (aliyun, bigmodel) use the GLM-specific transformer which ensures signature field handling
+	// OpenRouter providers use the OpenRouter-specific transformer which preserves signature fields
 	server.SetTransformerRegistry(NewRegistryAdapter(registry))
 
 	// Setup provider clients
 	clients := make(map[string]proxy.HTTPClient)
 	for name, providerCfg := range cfg.Providers {
+		// Validate API key is not empty or unset
+		if providerCfg.APIKey == "" {
+			return fmt.Errorf("provider %s: API key is empty (check environment variable)", name)
+		}
+		if strings.HasPrefix(providerCfg.APIKey, "${") {
+			return fmt.Errorf("provider %s: API key environment variable not set: %s", name, providerCfg.APIKey)
+		}
+
 		client, err := provider.NewClient(&provider.ClientConfig{
 			BaseURL:    providerCfg.BaseURL,
 			APIKey:     providerCfg.APIKey,
@@ -186,6 +201,21 @@ func runCode(cmd *cobra.Command, args []string) error {
 	}
 	server.SetProviderClients(clients)
 	server.SetConfig(cfg)
+
+	// Initialize usage tracker
+	dbPath, err := usage.DBPath()
+	if err != nil {
+		return fmt.Errorf("failed to get db path: %w", err)
+	}
+
+	usageDB, err := usage.InitDB(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to init usage db: %w", err)
+	}
+
+	tracker := usage.NewTracker(usageDB, usage.DefaultBufferSize, usage.DefaultFlushTimeout)
+	server.SetUsageTracker(tracker)
+	server.SetInstanceID(instanceID)
 
 	// Start server
 	if err := server.Start(); err != nil {
