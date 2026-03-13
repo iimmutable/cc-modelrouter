@@ -130,6 +130,7 @@ type ContentBlock struct {
 	Content         MessageContent     `json:"content,omitempty"`   // For tool_result content (string or array of content blocks)
 	Thinking        string             `json:"thinking,omitempty"`  // For extended thinking content
 	Signature       *string            `json:"signature,omitempty"` // For thinking signature (pointer distinguishes omit vs empty string)
+	Data            string             `json:"-"`                   // For redacted_thinking blocks (custom marshal/unmarshal)
 	IsError         bool               `json:"is_error,omitempty"`  // For tool_result errors
 	Title           string             `json:"title,omitempty"`     // For document blocks
 	Context         string             `json:"context,omitempty"`   // For document blocks
@@ -232,6 +233,19 @@ func (cb ContentBlock) MarshalJSON() ([]byte, error) {
 		return json.Marshal(trb)
 	}
 
+	// For redacted_thinking blocks - preserve the data field
+	if cb.Type == "redacted_thinking" {
+		type redactedThinkingBlock struct {
+			Type string `json:"type"`
+			Data string `json:"data"`
+		}
+		rtb := redactedThinkingBlock{
+			Type: cb.Type,
+			Data: cb.Data,
+		}
+		return json.Marshal(rtb)
+	}
+
 	// For all other block types, use standard marshaling
 	// Define a standard block struct without the custom tool_use_id field
 	type standardBlock struct {
@@ -328,6 +342,16 @@ func (cb *ContentBlock) UnmarshalJSON(data []byte) error {
 			cb.Signature = &sig // Store as pointer (can be empty string)
 		}
 		// If signature field is missing, cb.Signature remains nil (field will be omitted)
+		return nil
+	}
+
+	// For redacted_thinking blocks, read the data field
+	if blockType == "redacted_thinking" {
+		if dataField, ok := raw["data"]; ok {
+			if err := json.Unmarshal(dataField, &cb.Data); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 

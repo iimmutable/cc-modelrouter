@@ -204,10 +204,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 
 		client, err := provider.NewClient(&provider.ClientConfig{
-			BaseURL:    providerCfg.BaseURL,
-			APIKey:     providerCfg.APIKey,
-			MaxRetries: cfg.Router.MaxRetries,
-			RetryDelay: cfg.Router.GetRetryDelay(),
+			BaseURL:           providerCfg.BaseURL,
+			APIKey:            providerCfg.APIKey,
+			MaxRetries:        cfg.Router.MaxRetries,
+			RetryDelay:        cfg.Router.GetRetryDelay(),
+			DisableKeepAlives: providerCfg.DisableKeepAlives,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create client for %s: %w", name, err)
@@ -215,6 +216,24 @@ func runStart(cmd *cobra.Command, args []string) error {
 		clients[name] = client
 	}
 	server.SetProviderClients(clients)
+
+	// Create streaming clients (no timeout for long-running SSE streams)
+	streamingClients := make(map[string]proxy.HTTPClient)
+	for name, providerCfg := range cfg.Providers {
+		streamingClient, err := provider.NewStreamingClient(&provider.ClientConfig{
+			BaseURL:           providerCfg.BaseURL,
+			APIKey:            providerCfg.APIKey,
+			MaxRetries:        cfg.Router.MaxRetries,
+			RetryDelay:        cfg.Router.GetRetryDelay(),
+			DisableKeepAlives: providerCfg.DisableKeepAlives,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create streaming client for %s: %w", name, err)
+		}
+		streamingClients[name] = streamingClient
+	}
+	server.SetStreamingClients(streamingClients)
+
 	server.SetConfig(cfg)
 
 	// Initialize usage tracker

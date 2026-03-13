@@ -1,17 +1,19 @@
-package anthropic
+package anthropic_test
 
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
 // TestDocumentContentBlockWithFileID tests that document content blocks
 // can be marshaled/unmarshaled with file_id references.
 func TestDocumentContentBlockWithFileID(t *testing.T) {
 	t.Run("marshal document block with file_id", func(t *testing.T) {
-		block := ContentBlock{
+		block := anthropic.ContentBlock{
 			Type: "document",
-			DocumentSource: &DocumentSource{
+			DocumentSource: &anthropic.DocumentSource{
 				Type:   "file",
 				FileID: "file_011CNha8iCJcU1wXNR6q4V8w",
 			},
@@ -56,7 +58,7 @@ func TestDocumentContentBlockWithFileID(t *testing.T) {
 			"title": "Test Document"
 		}`
 
-		var block ContentBlock
+		var block anthropic.ContentBlock
 		if err := json.Unmarshal([]byte(jsonData), &block); err != nil {
 			t.Fatalf("failed to unmarshal: %v", err)
 		}
@@ -91,7 +93,7 @@ func TestDocumentContentBlockWithFileID(t *testing.T) {
 			"citations": {"enabled": true}
 		}`
 
-		var block ContentBlock
+		var block anthropic.ContentBlock
 		if err := json.Unmarshal([]byte(jsonData), &block); err != nil {
 			t.Fatalf("failed to unmarshal: %v", err)
 		}
@@ -128,7 +130,7 @@ func TestMessageContentWithDocument(t *testing.T) {
 		]
 	}`
 
-	var msg Message
+	var msg anthropic.Message
 	if err := json.Unmarshal([]byte(jsonData), &msg); err != nil {
 		t.Fatalf("failed to unmarshal: %v", err)
 	}

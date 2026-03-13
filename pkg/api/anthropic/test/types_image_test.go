@@ -1,10 +1,12 @@
-package anthropic
+package anthropic_test
 
 import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
 // TestImageMediaTypes tests that all common image media types are properly handled.
@@ -48,9 +50,9 @@ func TestImageMediaTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			imageBlock := ContentBlock{
+			imageBlock := anthropic.ContentBlock{
 				Type: "image",
-				Source: &ImageSource{
+				Source: &anthropic.ImageSource{
 					Type:      "base64",
 					MediaType: tt.mediaType,
 					Data:      tt.data,
@@ -63,7 +65,7 @@ func TestImageMediaTypes(t *testing.T) {
 				t.Fatalf("failed to marshal image block: %v", err)
 			}
 
-			var unmarshaled ContentBlock
+			var unmarshaled anthropic.ContentBlock
 			if err := json.Unmarshal(data, &unmarshaled); err != nil {
 				t.Fatalf("failed to unmarshal image block: %v", err)
 			}
@@ -93,11 +95,11 @@ func TestImageMediaTypes(t *testing.T) {
 
 // TestImageWithTextContent tests that images can be combined with text in the same message.
 func TestImageWithTextContent(t *testing.T) {
-	content := MessageContent{
+	content := anthropic.MessageContent{
 		{Type: "text", Text: "What's in this image?"},
 		{
 			Type: "image",
-			Source: &ImageSource{
+			Source: &anthropic.ImageSource{
 				Type:      "base64",
 				MediaType: "image/png",
 				Data:      "base64datahere",
@@ -133,17 +135,17 @@ func TestImageWithTextContent(t *testing.T) {
 
 // TestImageInMessage tests that images work in full message structures.
 func TestImageInMessage(t *testing.T) {
-	req := &Request{
+	req := &anthropic.Request{
 		Model:     "claude-3-5-sonnet-20241022",
 		MaxTokens: 4096,
-		Messages: []Message{
+		Messages: []anthropic.Message{
 			{
-				Role: RoleUser,
-				Content: MessageContent{
+				Role: anthropic.RoleUser,
+				Content: anthropic.MessageContent{
 					{Type: "text", Text: "Describe this image"},
 					{
 						Type: "image",
-						Source: &ImageSource{
+						Source: &anthropic.ImageSource{
 							Type:      "base64",
 							MediaType: "image/jpeg",
 							Data:      "fakebase64data",
@@ -159,7 +161,7 @@ func TestImageInMessage(t *testing.T) {
 		t.Fatalf("failed to marshal request: %v", err)
 	}
 
-	var unmarshaled Request
+	var unmarshaled anthropic.Request
 	if err := json.Unmarshal(data, &unmarshaled); err != nil {
 		t.Fatalf("failed to unmarshal request: %v", err)
 	}
@@ -197,12 +199,12 @@ func TestImageInMessage(t *testing.T) {
 func TestImageSourceValidation(t *testing.T) {
 	tests := []struct {
 		name        string
-		source      *ImageSource
+		source      *anthropic.ImageSource
 		expectError bool
 	}{
 		{
 			name: "valid base64 image",
-			source: &ImageSource{
+			source: &anthropic.ImageSource{
 				Type:      "base64",
 				MediaType: "image/png",
 				Data:      "validbase64data",
@@ -211,7 +213,7 @@ func TestImageSourceValidation(t *testing.T) {
 		},
 		{
 			name: "missing type field",
-			source: &ImageSource{
+			source: &anthropic.ImageSource{
 				MediaType: "image/png",
 				Data:      "data",
 			},
@@ -219,7 +221,7 @@ func TestImageSourceValidation(t *testing.T) {
 		},
 		{
 			name: "missing media type",
-			source: &ImageSource{
+			source: &anthropic.ImageSource{
 				Type: "base64",
 				Data: "data",
 			},
@@ -234,7 +236,7 @@ func TestImageSourceValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			imageBlock := ContentBlock{
+			imageBlock := anthropic.ContentBlock{
 				Type:   "image",
 				Source: tt.source,
 			}
@@ -248,7 +250,7 @@ func TestImageSourceValidation(t *testing.T) {
 				return
 			}
 
-			var unmarshaled ContentBlock
+			var unmarshaled anthropic.ContentBlock
 			if err := json.Unmarshal(data, &unmarshaled); err != nil {
 				if !tt.expectError {
 					t.Errorf("unexpected unmarshal error: %v", err)
@@ -265,11 +267,11 @@ func TestImageSourceValidation(t *testing.T) {
 
 // TestMultipleImages tests handling multiple images in a single message.
 func TestMultipleImages(t *testing.T) {
-	content := MessageContent{
+	content := anthropic.MessageContent{
 		{Type: "text", Text: "Compare these images"},
 		{
 			Type: "image",
-			Source: &ImageSource{
+			Source: &anthropic.ImageSource{
 				Type:      "base64",
 				MediaType: "image/png",
 				Data:      "image1data",
@@ -277,7 +279,7 @@ func TestMultipleImages(t *testing.T) {
 		},
 		{
 			Type: "image",
-			Source: &ImageSource{
+			Source: &anthropic.ImageSource{
 				Type:      "base64",
 				MediaType: "image/jpeg",
 				Data:      "image2data",
@@ -290,7 +292,7 @@ func TestMultipleImages(t *testing.T) {
 		t.Fatalf("failed to marshal content: %v", err)
 	}
 
-	var unmarshaled MessageContent
+	var unmarshaled anthropic.MessageContent
 	if err := json.Unmarshal(data, &unmarshaled); err != nil {
 		t.Fatalf("failed to unmarshal content: %v", err)
 	}
@@ -323,14 +325,14 @@ func TestMultipleImages(t *testing.T) {
 
 // TestImageWithToolUse tests that images can coexist with tool_use blocks.
 func TestImageWithToolUse(t *testing.T) {
-	messages := []Message{
+	messages := []anthropic.Message{
 		{
-			Role: RoleUser,
-			Content: MessageContent{
+			Role: anthropic.RoleUser,
+			Content: anthropic.MessageContent{
 				{Type: "text", Text: "Analyze this image"},
 				{
 					Type: "image",
-					Source: &ImageSource{
+					Source: &anthropic.ImageSource{
 						Type:      "base64",
 						MediaType: "image/webp",
 						Data:      "webpdata",
@@ -339,8 +341,8 @@ func TestImageWithToolUse(t *testing.T) {
 			},
 		},
 		{
-			Role: RoleAssistant,
-			Content: MessageContent{
+			Role: anthropic.RoleAssistant,
+			Content: anthropic.MessageContent{
 				{
 					Type:  "tool_use",
 					ID:    "toolu_123",
@@ -351,7 +353,7 @@ func TestImageWithToolUse(t *testing.T) {
 		},
 	}
 
-	req := &Request{
+	req := &anthropic.Request{
 		Model:     "claude-3-5-sonnet-20241022",
 		MaxTokens: 4096,
 		Messages:  messages,
@@ -362,7 +364,7 @@ func TestImageWithToolUse(t *testing.T) {
 		t.Fatalf("failed to marshal request: %v", err)
 	}
 
-	var unmarshaled Request
+	var unmarshaled anthropic.Request
 	if err := json.Unmarshal(data, &unmarshaled); err != nil {
 		t.Fatalf("failed to unmarshal request: %v", err)
 	}

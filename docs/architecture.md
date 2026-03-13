@@ -22,7 +22,7 @@ cc-modelrouter is built as a layered architecture with clear separation of conce
                               │
 ┌─────────────────────────────────────────────────────────────┐
 │ Transformer Layer                                           │
-│ (anthropic, openrouter, gemini, qwen, glm)                  │
+│ (anthropic, openai, openrouter, gemini, glm)                │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
@@ -122,10 +122,11 @@ Converts requests and responses between Anthropic format and provider-specific f
 ```go
 type Transformer interface {
     Name() string
-    TransformRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error)
-    TransformResponse(resp *http.Response) (*anthropic.Response, error)
+    Endpoint() string
+    PrepareRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error)
+    ParseResponse(resp *http.Response) (*anthropic.Response, error)
     SupportsStreaming() bool
-    TransformStreamChunk(chunk []byte, eventType string) ([]byte, error)
+    TransformStreamEvent(event *SSEEvent) ([]SSEEvent, error)
 }
 ```
 
@@ -134,10 +135,10 @@ type Transformer interface {
 | Transformer | Format | Authentication |
 |-------------|--------|----------------|
 | `anthropic` | Anthropic native | `x-api-key` header |
-| `openrouter` | OpenAI-compatible | `Authorization: Bearer` |
+| `openai` | OpenAI-compatible | `Authorization: Bearer` |
+| `openrouter` | Anthropic native (with signature/thinking normalization) | `x-api-key` header |
 | `gemini` | Gemini native (`contents`/`parts`) | Query param `key=` |
-| `qwen` | OpenAI-compatible | `Authorization: Bearer` |
-| `glm` | Anthropic-compatible | `Authorization: Bearer` |
+| `glm-anthropic` | Anthropic-compatible | `x-api-key` header |
 
 ### Provider Client Layer (`internal/provider/`)
 
@@ -148,6 +149,23 @@ HTTP client for communicating with provider APIs.
 - Retry with configurable delay
 - Streaming support
 - Timeout handling
+
+### Interceptor Layer (`internal/interceptor/`)
+
+Cross-cutting request/response modifications applied at three points in the request pipeline.
+
+**Built-in Interceptors:**
+
+| Interceptor | Type | Description |
+|-------------|------|-------------|
+| `MaxTokensInterceptor` | Request | Adjusts `max_tokens` based on provider/model limits (e.g., OpenAI 4096, Claude 8192) |
+| `ReasoningInterceptor` | Response/Streaming | Extracts and formats thinking/reasoning content for display |
+| `ToolEnhanceInterceptor` | Request | Ensures tools have descriptions, normalizes parameter schemas |
+
+**Registration points** (in `internal/proxy/`):
+- `AddRequestInterceptor(fn)` — before routing
+- `AddResponseInterceptor(fn)` — after provider response
+- `AddStreamingInterceptor(fn)` — per SSE event
 
 ### Daemon Management (`internal/daemon/`)
 
@@ -242,3 +260,29 @@ Each `ccrouter code` command creates an isolated environment:
 - Simple and predictable behavior
 - Easy to reason about retry logic
 - Matches common load balancer patterns
+
+## Security Layer
+
+### Logging Sanitization (`internal/logging/sanitize.go`)
+
+Prevents API keys and secrets from leaking into log files.
+
+**Features:**
+- Automatic header redaction for sensitive values
+- Case-insensitive header matching
+- Preserves header names for debugging while hiding values
+- Integrates with all logging functions
+
+**Sensitive Headers Protected:**
+- `Authorization` (Bearer tokens)
+- `X-Api-Key` (API keys)
+- `Cookie` / `Set-Cookie` (session data)
+- Provider-specific headers (`X-BigModel-Api-Key`, etc.)
+
+**Usage:**
+```go
+// All header logging MUST use sanitization
+logging.Debugf("Headers: %s", logging.SanitizeHeadersString(req.Header))
+```
+
+See `docs/security/secret-handling.md` for detailed documentation.

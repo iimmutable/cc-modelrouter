@@ -9,17 +9,26 @@ type Transformer interface {
     // Name returns the transformer name (used for registry lookup)
     Name() string
 
-    // TransformRequest converts an Anthropic request to a provider-specific HTTP request
-    TransformRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error)
+    // Endpoint returns the API endpoint path for this transformer
+    Endpoint() string
 
-    // TransformResponse converts a provider response to Anthropic format
-    TransformResponse(resp *http.Response) (*anthropic.Response, error)
+    // PrepareRequest converts an Anthropic request to a provider-specific HTTP request
+    PrepareRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error)
+
+    // ParseResponse converts a provider HTTP response to Anthropic format
+    ParseResponse(resp *http.Response) (*anthropic.Response, error)
 
     // SupportsStreaming returns true if this transformer supports streaming
     SupportsStreaming() bool
 
-    // TransformStreamChunk transforms a streaming chunk to Anthropic format
-    TransformStreamChunk(chunk []byte, eventType string) ([]byte, error)
+    // TransformStreamEvent converts a provider SSE event to Anthropic SSE events
+    TransformStreamEvent(event *SSEEvent) ([]SSEEvent, error)
+}
+
+// SSEEvent represents a complete server-sent event with type and data.
+type SSEEvent struct {
+    EventType string  // SSE event type (e.g., "message_start", "content_block_delta")
+    Data      []byte  // Raw JSON data payload
 }
 ```
 
@@ -42,11 +51,11 @@ Headers:
   anthropic-version: 2023-06-01
 ```
 
-### OpenRouterTransformer
+### OpenAI Transformer
 
-Converts to OpenAI chat completions format.
+Converts to OpenAI chat completions format for OpenAI-compatible APIs.
 
-**Use case:** OpenRouter API
+**Use case:** OpenAI-compatible APIs (OpenAI, Qwen, etc.)
 
 **Request format:** OpenAI-compatible
 **Auth:** `Authorization: Bearer` header
@@ -58,11 +67,44 @@ Headers:
   Authorization: Bearer <api-key>
 Body:
 {
+  "model": "gpt-4o",
+  "messages": [{"role": "user", "content": "..."}],
+  "max_tokens": 4096
+}
+```
+
+**Note:** Use this transformer for:
+- Direct OpenAI API
+- Alibaba Qwen (DashScope)
+- Any OpenAI-compatible API
+
+### OpenRouterTransformer
+
+Wraps the Anthropic transformer with OpenRouter-specific handling for signature preservation and thinking block normalization.
+
+**Use case:** OpenRouter API (all models including Anthropic)
+
+**Request format:** Anthropic Messages API format
+**Auth:** `x-api-key` header
+
+```go
+// Request
+POST /v1/messages
+Headers:
+  x-api-key: <api-key>
+  anthropic-version: 2023-06-01
+Body:
+{
   "model": "anthropic/claude-sonnet-4",
   "messages": [{"role": "user", "content": "..."}],
   "max_tokens": 4096
 }
 ```
+
+**Key differences from AnthropicTransformer:**
+- Always normalizes thinking blocks (adds text block to single thinking-only content)
+- Preserves signature fields (sets to empty string `""` instead of omitting)
+- Required because OpenRouter validates strictly on these fields
 
 ### GeminiTransformer
 
@@ -98,64 +140,51 @@ Body:
 - Tools → `functionDeclarations`
 - Images → `inlineData`
 
-### QwenTransformer
+### Qwen (Alibaba DashScope)
 
-Converts to OpenAI-compatible format for Alibaba Qwen.
+Qwen API uses Anthropic-compatible format. Use the **Anthropic Transformer** (see above).
 
-**Use case:** DashScope Qwen API
-
-**Request format:** OpenAI-compatible
-**Auth:** `Authorization: Bearer` header
-
-```go
-// Request
-POST /chat/completions
-Headers:
-  Authorization: Bearer <api-key>
-Body:
+**Configuration:**
+```json
 {
-  "model": "qwen-turbo",
-  "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "..."}
-  ],
-  "max_tokens": 4096
+  "qwen": {
+    "apiKey": "${DASHSCOPE_API_KEY}",
+    "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+    "transformer": "anthropic",
+    "models": ["qwen-turbo", "qwen-plus"]
+  }
 }
 ```
-
-**Key transformations:**
-- System prompt → first message with `role: "system"`
-- Tools → OpenAI function format
-- Tool calls in response → `tool_use` content blocks
 
 ### GLMTransformer
 
 Pass-through for Anthropic-compatible GLM API.
 
-**Use case:** Zhipu BigModel GLM
+**Use case:** Zhipu BigModel, Aliyun DashScope, MiniMax
 
 **Request format:** Anthropic-compatible
-**Auth:** `Authorization: Bearer` header
+**Auth:** `x-api-key` header
 
 ```go
 // Request
 POST /v1/messages
 Headers:
-  Authorization: Bearer <api-key>
+  x-api-key: <api-key>
+  anthropic-version: 2023-06-01
 Body: (Anthropic format)
 ```
 
 ## Transformer Registry
 
-Transformers are registered at startup:
+Transformers are registered at startup in `internal/cli/start.go` and `internal/cli/code.go`:
 
 ```go
 registry := transformer.NewRegistry()
-registry.Register(transformer.NewAnthropicTransformer())
-registry.Register(transformer.NewOpenRouterTransformer())
-registry.Register(transformer.NewGeminiTransformer())
-registry.Register(transformer.NewQwenTransformer())
-registry.Register(transformer.NewGLMTransformer())
+registry.Register(transformers.NewAnthropicTransformer())
+registry.Register(transformers.NewGLMAnthropicTransformer())
+registry.Register(transformers.NewOpenRouterTransformer())
+registry.Register(transformers.NewOpenAITransformer())
+registry.Register(transformers.NewGeminiTransformer())
 ```
 
 **Lookup:**
@@ -171,7 +200,7 @@ if err != nil {
 ### 1. Implement the Interface
 
 ```go
-package transformer
+package transformers
 
 type MyTransformer struct{}
 
@@ -183,7 +212,11 @@ func (t *MyTransformer) Name() string {
     return "myprovider"
 }
 
-func (t *MyTransformer) TransformRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
+func (t *MyTransformer) Endpoint() string {
+    return "/v1/messages"  // or provider-specific endpoint
+}
+
+func (t *MyTransformer) PrepareRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error) {
     // Convert Anthropic request to provider format
     providerReq := convertRequest(req, model)
 
@@ -204,7 +237,7 @@ func (t *MyTransformer) TransformRequest(req *anthropic.Request, baseURL, apiKey
     return httpReq, nil
 }
 
-func (t *MyTransformer) TransformResponse(resp *http.Response) (*anthropic.Response, error) {
+func (t *MyTransformer) ParseResponse(resp *http.Response) (*anthropic.Response, error) {
     if resp.StatusCode >= 400 {
         body, _ := io.ReadAll(resp.Body)
         return nil, fmt.Errorf("API error: %s - %s", resp.Status, string(body))
@@ -222,9 +255,9 @@ func (t *MyTransformer) SupportsStreaming() bool {
     return true // or false
 }
 
-func (t *MyTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) {
-    // Convert streaming chunk format
-    return chunk, nil // or transform
+func (t *MyTransformer) TransformStreamEvent(event *transformer.SSEEvent) ([]transformer.SSEEvent, error) {
+    // Convert streaming SSE event format
+    return []transformer.SSEEvent{*event}, nil // or transform
 }
 ```
 
@@ -232,7 +265,7 @@ func (t *MyTransformer) TransformStreamChunk(chunk []byte, eventType string) ([]
 
 ```go
 // In internal/cli/start.go and internal/cli/code.go
-registry.Register(transformer.NewMyTransformer())
+registry.Register(transformers.NewMyTransformer())
 ```
 
 ## Format Conversion Patterns
@@ -370,17 +403,16 @@ registry.Register(transformer.NewMyTransformer())
 internal/transformer/
 ├── interface.go        # Transformer interface
 ├── registry.go         # Transformer registry
-├── anthropic.go        # Anthropic transformer
-├── openrouter.go       # OpenRouter transformer
-├── gemini.go           # Gemini transformer
-├── qwen.go             # Qwen transformer
-├── glm_anthropic.go    # GLM Anthropic transformer
+├── base.go             # Base types
 └── transformers/       # Transformer implementations
-    ├── anthropic.go
-    ├── openrouter.go
-    ├── glm_anthropic.go
-    └── ...
+    ├── anthropic.go    # Anthropic (pass-through)
+    ├── openai.go      # OpenAI-compatible
+    ├── openrouter.go  # OpenRouter (handles signature preservation)
+    ├── gemini.go      # Gemini native format
+    └── glm_anthropic.go # GLM Anthropic-compatible
 ```
+
+**Note:** Transformers are registered in `internal/cli/start.go` and `internal/cli/code.go`.
 
 ---
 
@@ -399,35 +431,19 @@ Thinking blocks are a special content block type used by Anthropic's extended th
 | **GLM providers (Aliyun, BigModel)** | Must be present | Accepts empty string value |
 | **Other OpenRouter models** | Must be present | Accepts empty or whitespace values |
 
-### The Signature Field Problem
+### The Signature Field Solution
 
-The `ContentBlock.Signature` field has conflicting requirements:
-- **Omit** the field for direct Anthropic API (or get 400 error)
-- **Include** the field for OpenRouter Anthropic models (or get 400 error)
+The implementation uses pointer types to distinguish between omitting and including the field:
 
-With a plain `string` type, we cannot distinguish between:
-1. "Omit this field from JSON"
-2. "Include this field with empty string value"
-
-**Current Implementation (Bug):**
 ```go
 type ContentBlock struct {
-    Signature string `json:"signature,omitempty"`
-}
-```
-
-When `Signature = ""`, the `omitempty` tag omits the field, causing OpenRouter to see it as "undefined".
-
-**Required Fix:**
-```go
-type ContentBlock struct {
-    Signature *string `json:"signature,omitempty"`
+    Signature *string `json:"signature,omitempty"` // Pointer distinguishes omit vs empty string
 }
 ```
 
 This allows:
 - `nil` → omit field (for Anthropic API)
-- `&""` → include empty string (for OpenRouter)
+- `&""` → include empty string (for OpenRouter, GLM)
 - `&"value"` → include actual value
 
 ### Content Normalization
@@ -450,9 +466,9 @@ This allows:
 
 #### AnthropicTransformer
 ```go
-// Strip whitespace-only signatures (omit field)
-if strings.TrimSpace(signature) == "" {
-    signature = ""  // Will be omitted by MarshalJSON
+// Strip whitespace-only signatures (set to nil to omit field)
+if isWhitespacePtr(signature) {
+    signature = nil  // Will be omitted by MarshalJSON
 }
 // Do NOT normalize single thinking blocks (Anthropic accepts them)
 ```
@@ -471,16 +487,14 @@ normalizeThinkingBlockMessages(&reqCopy)
 // OpenRouter Anthropic models require signature field to be PRESENT (not omitted)
 // Existing signatures from previous provider responses MUST be cleared
 if isAnthropicModel {
-    // Always clear signature for OpenRouter Anthropic models
+    // ALWAYS clear signature for OpenRouter Anthropic models
     // Setting to empty string ensures the field is present (required by OpenRouter)
-    // Clears any existing signature from previous provider responses (GLM, OpenAI, etc.)
-    if signature == nil || isWhitespacePtr(signature) {
-        signature = strPtr("")  // Include empty string
-    }
+    // Clears any existing signature from previous provider responses
+    reqCopy.Messages[i].Content[j].Signature = strPtr("")
 } else {
     // Non-Anthropic models: ensure signature field is present
-    if signature == nil || isWhitespacePtr(signature) {
-        signature = strPtr("")  // Include empty string
+    if reqCopy.Messages[i].Content[j].Signature == nil || isWhitespacePtr(reqCopy.Messages[i].Content[j].Signature) {
+        reqCopy.Messages[i].Content[j].Signature = strPtr("")  // Include empty string
     }
 }
 ```

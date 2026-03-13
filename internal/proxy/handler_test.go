@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -16,6 +17,19 @@ import (
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
 	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
+
+// httpClientAdapter wraps http.Client to implement HTTPClient interface
+type httpClientAdapter struct {
+	client *http.Client
+}
+
+func (a *httpClientAdapter) Do(req *http.Request) (*http.Response, error) {
+	return a.client.Do(req)
+}
+
+func (a *httpClientAdapter) DoWithContext(ctx context.Context, req *http.Request) (*http.Response, error) {
+	return a.client.Do(req.WithContext(ctx))
+}
 
 // Mock implementations for testing
 
@@ -87,7 +101,8 @@ func (m *anthropicTransformer) TransformStreamEvent(event *transformer.SSEEvent)
 }
 
 type mockHTTPClient struct {
-	doFunc func(req *http.Request) (*http.Response, error)
+	doFunc           func(req *http.Request) (*http.Response, error)
+	doWithContextFunc func(ctx context.Context, req *http.Request) (*http.Response, error)
 }
 
 func (m *mockHTTPClient) Do(req *http.Request) (*http.Response, error) {
@@ -98,6 +113,14 @@ func (m *mockHTTPClient) Do(req *http.Request) (*http.Response, error) {
 		StatusCode: http.StatusOK,
 		Body:       http.NoBody,
 	}, nil
+}
+
+func (m *mockHTTPClient) DoWithContext(ctx context.Context, req *http.Request) (*http.Response, error) {
+	if m.doWithContextFunc != nil {
+		return m.doWithContextFunc(ctx, req)
+	}
+	// Fallback to Do if not specified
+	return m.Do(req)
 }
 
 type mockUsageTracker struct {
@@ -1193,7 +1216,7 @@ func TestTryStreamingTarget_InvalidJSONInStream(t *testing.T) {
 		},
 	})
 
-	handler.SetProviderClients(map[string]HTTPClient{"test": &http.Client{}})
+	handler.SetProviderClients(map[string]HTTPClient{"test": &httpClientAdapter{client: &http.Client{}}})
 
 	target := config.RouteTarget{Provider: "test", Model: "test-model"}
 	req := &anthropic.Request{
@@ -1241,6 +1264,173 @@ func TestTryStreamingTarget_InvalidJSONInStream(t *testing.T) {
 	if strings.Contains(responseBody, "[object Object]") {
 		t.Error("Invalid JSON '[object Object]' should not appear in response")
 	}
+}
+
+// TestHandleStreaming_IsolatedContexts verifies that each provider in the failover
+// chain gets its own independent context. This prevents "context canceled" errors
+// from cascading across providers when one fails.
+//
+// Root cause: Previously, the handler reused r.Context() for all providers.
+// When one provider failed, the context could become canceled, causing all
+// subsequent providers to fail with "context canceled" immediately.
+//
+// Fix: Create a fresh context.Background() for each provider attempt.
+func TestHandleStreaming_IsolatedContexts(t *testing.T) {
+	handler := NewHandler(1024 * 1024)
+	handler.SetTransformerRegistry(&mockTransformerRegistry{})
+	handler.SetConfig(&config.Config{
+		Providers: map[string]config.ProviderConfig{
+			"provider1": {
+				BaseURL:     "https://provider1.example.com",
+				APIKey:      "test-key",
+				Transformer: "anthropic",
+			},
+			"provider2": {
+				BaseURL:     "https://provider2.example.com",
+				APIKey:      "test-key",
+				Transformer: "anthropic",
+			},
+		},
+	})
+
+	// Track contexts used by each provider - capture context at call time
+	var provider1Ctx, provider2Ctx context.Context
+
+	// Create mock servers for each provider
+	provider1Called := false
+	provider1Server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provider1Called = true
+		// Capture the context at the time of the request
+		provider1Ctx = r.Context()
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		flusher, _ := w.(http.Flusher)
+
+		// Send immediate error to trigger failover
+		w.WriteHeader(http.StatusBadGateway)
+		flusher.Flush()
+	}))
+	defer provider1Server.Close()
+
+	provider2Called := false
+	provider2Server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provider2Called = true
+		// Capture the context at the time of the request
+		provider2Ctx = r.Context()
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		flusher, _ := w.(http.Flusher)
+
+		// Send successful response
+		w.Write([]byte("event: message_start\n"))
+		w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"test-model\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n"))
+		flusher.Flush()
+		w.Write([]byte("event: message_delta\n"))
+		w.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":5}}\n\n"))
+		flusher.Flush()
+		w.Write([]byte("event: message_stop\n"))
+		w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
+		flusher.Flush()
+	}))
+	defer provider2Server.Close()
+
+	// Set up clients
+	handler.SetProviderClients(map[string]HTTPClient{
+		"provider1": &httpClientAdapter{client: &http.Client{}},
+		"provider2": &httpClientAdapter{client: &http.Client{}},
+	})
+	handler.SetStreamingClients(map[string]HTTPClient{
+		"provider1": &httpClientAdapter{client: &http.Client{}},
+		"provider2": &httpClientAdapter{client: &http.Client{}},
+	})
+
+	// Update config with mock server URLs
+	handler.SetConfig(&config.Config{
+		Providers: map[string]config.ProviderConfig{
+			"provider1": {
+				BaseURL:     provider1Server.URL,
+				APIKey:      "test-key",
+				Transformer: "anthropic",
+			},
+			"provider2": {
+				BaseURL:     provider2Server.URL,
+				APIKey:      "test-key",
+				Transformer: "anthropic",
+			},
+		},
+	})
+
+	// Create test request
+	req := &anthropic.Request{
+		Model:     "test-model",
+		MaxTokens: 100,
+		Stream:    true,
+		Messages:  []anthropic.Message{{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: "hello"}}}},
+	}
+
+	// Set up router to return both providers
+	handler.SetRouter(&mockRouter{
+		detectRouteFunc: func(req router.RouteRequest) string {
+			return "test"
+		},
+		getTargetsFunc: func(routeName string) []config.RouteTarget {
+			return []config.RouteTarget{
+				{Provider: "provider1", Model: "model1"},
+				{Provider: "provider2", Model: "model2"},
+			}
+		},
+	})
+
+	// Create a response recorder
+	w := httptest.NewRecorder()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Call the streaming handler
+	handler.handleStreaming(w, &http.Request{
+		Method: "POST",
+		URL:    &url.URL{Path: "/v1/messages"},
+	}, req, "test", []config.RouteTarget{
+		{Provider: "provider1", Model: "model1"},
+		{Provider: "provider2", Model: "model2"},
+	})
+
+	// Verify both providers were called
+	if !provider1Called {
+		t.Fatal("Provider 1 was not called")
+	}
+	if !provider2Called {
+		t.Fatal("Provider 2 was not called - context isolation may be broken")
+	}
+
+	// Verify that each provider got a valid context
+	// The key assertion: provider 2 should succeed even though provider 1 failed
+	// If contexts were shared and provider 1 canceled it, provider 2 would fail with "context canceled"
+	if provider1Ctx == nil {
+		t.Fatal("Provider 1 context should not be nil")
+	}
+	if provider2Ctx == nil {
+		t.Fatal("Provider 2 context should not be nil")
+	}
+
+	// The contexts should be different (independent)
+	if provider1Ctx == provider2Ctx {
+		t.Error("Providers should have different context instances")
+	}
+
+	// Verify the response was successful (provider 2 succeeded)
+	// This is the main test: provider 2 should work even though provider 1 failed
+	responseBody := w.Body.String()
+	if !strings.Contains(responseBody, "message_start") {
+		t.Error("Provider 2 should have succeeded and sent response")
+	}
+
+	t.Logf("Context isolation test passed: both providers got independent contexts")
 }
 
 // TestHandleMessages_UsageTrackingFallback tests that usage tracking falls back

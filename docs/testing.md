@@ -91,12 +91,12 @@ cc-modelrouter/
 │   │   ├── engine_test.go     # Route detection tests
 │   │   └── failover_test.go   # Failover logic tests
 │   ├── transformer/
-│   │   ├── anthropic_test.go  # Anthropic transformer tests
-│   │   ├── gemini_test.go     # Gemini transformer tests
-│   │   ├── glm_test.go       # GLM transformer tests
-│   │   ├── qwen_test.go      # Qwen transformer tests
-│   │   ├── openrouter_test.go # OpenRouter transformer tests
-│   │   └── registry_test.go   # Transformer registry tests
+│   │   ├── anthropic_test.go     # Anthropic transformer tests
+│   │   ├── gemini_test.go        # Gemini transformer tests
+│   │   ├── glm_test.go          # GLM transformer tests
+│   │   ├── openai_test.go       # OpenAI transformer tests
+│   │   ├── openrouter_test.go   # OpenRouter transformer tests
+│   │   └── registry_test.go     # Transformer registry tests
 │   └── usage/
 │       ├── db_test.go         # Database operations tests
 │       ├── tracker_test.go    # Usage tracker tests
@@ -189,7 +189,7 @@ The integration test validates:
 | `internal/provider` | client_test.go, http_test.go | 23 | ✓ |
 | `internal/proxy` | handler_test.go, server_test.go, streaming_test.go | 61 | ✓ |
 | `internal/router` | engine_test.go, failover_test.go | 10 | ✓ |
-| `internal/transformer` | anthropic_test.go, gemini_test.go, glm_test.go, qwen_test.go, openrouter_test.go, registry_test.go | ~20 | ✓ |
+| `internal/transformer` | anthropic_test.go, gemini_test.go, glm_test.go, openai_test.go, openrouter_test.go, registry_test.go | ~20 | ✓ |
 | `internal/usage` | db_test.go, tracker_test.go, period_test.go, stats_test.go, formatter_test.go | 19 | ✓ |
 | `pkg/api/anthropic` | types_test.go | 3 | ✓ |
 
@@ -346,7 +346,7 @@ Tests for each provider transformer:
 |------|-------------|
 | `TestAnthropicTransform*` | Anthropic format transformation |
 | `TestGeminiTransform*` | Gemini API format transformation |
-| `TestQwenTransform*` | Qwen/DashScope format transformation |
+| `TestOpenAITransform*` | OpenAI-compatible format transformation |
 | `TestGLMTransform*` | Zhipu GLM format transformation |
 | `TestOpenRouterTransform*` | OpenRouter API format transformation |
 | `TestRegistry*` | Transformer registry management |

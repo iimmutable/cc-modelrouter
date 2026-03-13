@@ -57,7 +57,7 @@ func convertUserThinkingToText(req *anthropic.Request) {
 
 		hasThinking := false
 		for _, block := range req.Messages[i].Content {
-			if block.Type == "thinking" {
+			if block.Type == "thinking" || block.Type == "redacted_thinking" {
 				hasThinking = true
 				break
 			}
@@ -77,6 +77,12 @@ func convertUserThinkingToText(req *anthropic.Request) {
 					Type: "text",
 					Text: "<thinking>" + block.Thinking + "</thinking>",
 				})
+			} else if block.Type == "redacted_thinking" {
+				// Convert redacted_thinking to text placeholder
+				newContent = append(newContent, anthropic.ContentBlock{
+					Type: "text",
+					Text: "<redacted_thinking/>",
+				})
 			} else {
 				// Preserve other block types unchanged
 				newContent = append(newContent, block)
@@ -89,39 +95,45 @@ func convertUserThinkingToText(req *anthropic.Request) {
 // normalizeSingleElementContent ensures ANY content array without text blocks
 // is normalized to prevent provider validation errors.
 // This handles: single thinking, multiple thinking, single image, single tool_result,
-// thinking + image, etc.
+// thinking + image, etc. for ALL message roles.
+//
+// CRITICAL: This function processes ALL message roles (user, assistant, system),
+// not just assistant messages. Previously, only assistant messages were processed,
+// causing user messages with single thinking blocks to fail OpenRouter validation
+// with "expected string, received array" errors.
 //
 // The key insight from MessageContent.MarshalJSON():
 // - Single text block → marshals as STRING (valid)
 // - Anything else (single element or array without text) → marshals as ARRAY (fails OpenRouter validation)
 //
-// This function ensures assistant messages always have at least one text block,
+// This function ensures ALL messages have at least one text block,
 // making the content a multi-element array that passes validation.
 func normalizeSingleElementContent(req *anthropic.Request) {
 	for i := range req.Messages {
-		// Only process assistant messages
-		if req.Messages[i].Role != anthropic.RoleAssistant {
-			continue
-		}
-
+		// CRITICAL FIX: Process ALL message roles, not just assistant
+		// User messages with thinking blocks from conversation history
+		// were causing "expected string, received array" errors
 		content := req.Messages[i].Content
 		if len(content) == 0 {
 			continue
 		}
 
-		// Check if content has a text block (content would be valid as array)
-		hasTextBlock := false
+		// Check if content has a valid text block (non-empty text)
+		// CRITICAL FIX: Also check if text is non-empty
+		// Empty text "" or whitespace-only text causes
+		// "messages: text content blocks must be non-empty" errors
+		hasValidTextBlock := false
 		for _, block := range content {
-			if block.Type == "text" {
-				hasTextBlock = true
+			if block.Type == "text" && block.Text != "" && len(strings.TrimSpace(block.Text)) > 0 {
+				hasValidTextBlock = true
 				break
 			}
 		}
 
-		// If no text block, add one to ensure valid multi-element array
+		// If no valid text block, add one to ensure valid multi-element array
 		// This handles: single thinking, multiple thinking, single image,
-		// single tool_result, thinking + image, etc.
-		if !hasTextBlock {
+		// single tool_result, thinking + image, empty text blocks, etc.
+		if !hasValidTextBlock {
 			req.Messages[i].Content = append(content, anthropic.ContentBlock{
 				Type: "text",
 				Text: " ",
@@ -161,6 +173,12 @@ func validateAndRepairBlocks(req *anthropic.Request) {
 			if block.Type == "thinking" && block.Thinking == "" {
 				block.Type = "text"
 				block.Text = "[Thinking: content unavailable]"
+			}
+
+			// Validate redacted_thinking blocks - require data field
+			if block.Type == "redacted_thinking" && block.Data == "" {
+				block.Type = "text"
+				block.Text = "[Redacted thinking]"
 			}
 
 			// Validate document blocks - require document source

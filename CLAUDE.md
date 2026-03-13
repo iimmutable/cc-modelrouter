@@ -1,174 +1,105 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+AI-specific guidance for Claude Code when working with cc-modelrouter.
 
-## Build and Development Commands
+---
 
-### Building
+## 🚀 Quick Command Reference
+
+### Essential Build & Test Commands
 ```bash
-# Build all packages
-go build ./...
-
-# Build debug binary (default - when no "release"/"prod"/"production" specified)
+# Build debug binary (default)
 go build -o bin/debug/ccrouter ./cmd/ccrouter
 
-# Build release binary (when "release", "prod", or "production" specified)
+# Build release binary
 go build -o bin/release/ccrouter ./cmd/ccrouter
-```
 
-### Testing
-```bash
 # Run all tests
 go test ./...
 
-# With coverage
+# Test with coverage
 go test ./... -cover
 
-# Generate HTML coverage report
+# Generate coverage report
 go test ./... -coverprofile=coverage.out
 go tool cover -html=coverage.out
 
 # Run specific test
 go test ./internal/router -run TestThinkLevelDetection
 
-# Run integration tests (requires test config)
-go test -tags=integration ./test/... -v
+# Run security tests
+go test -v ./test/security
 ```
 
-### Running the Server
+### Essential Runtime Commands
 ```bash
-# Start router standalone
+# Start router + Claude Code (most common)
+./bin/ccrouter code
+
+# Start standalone
 ./bin/ccrouter start
 
 # Start with debug logging
 ./bin/ccrouter start --log-level=debug --log-destination=file
 
-# Start router and launch Claude Code (for development)
-./bin/ccrouter code
-
-# Show running instances
+# Check status
 ./bin/ccrouter status
 
-# Stop specific instance
+# Stop instance
 ./bin/ccrouter stop <instance-id>
 
-# Stop all instances
+# Stop all
 ./bin/ccrouter stop --all
 ```
 
-## Architecture Overview
+### Critical File Paths
+```
+~/.cc-modelrouter/config.json          # Global configuration
+<project>/.cc-modelrouter/config.json  # Project config (overrides global ENTIRELY)
+~/.cc-modelrouter/usage.db             # SQLite usage tracking
+~/.cc-modelrouter/logs/inst_*.log      # Instance logs
+~/.cc-modelrouter/instances/*.json     # Instance metadata
+```
 
-cc-modelrouter is a Go-based HTTP proxy that routes Claude Code requests to multiple LLM providers with automatic format transformation. The architecture uses a **Unified Intermediate Format** pattern to separate protocol conversion from routing logic.
+---
 
-### Core Request Flow
+## 📐 Architecture Quick Reference
+
+For full architecture diagrams and detailed explanations, see [README.md](README.md#architecture).
+
+**Core Request Flow:**
 ```
 Claude Code → HTTP Proxy → Router Engine → Transformer → Provider API
-                  ↓              ↓             ↓
-            (validate)     (detect      (convert
-                           route type    request)
-                           & select
-                           provider)
+                  ↓              ↓              ↓
+            (validate)      (detect route   (convert
+                            & select        request)
+                            provider)
 
 Provider API → Transformer → HTTP Proxy → Claude Code
                   ↓              ↓
-           (convert       (stream
-            response)     response)
+           (convert        (stream
+            response)      response)
 ```
 
-### Key Components
+**Key Components:**
+- `internal/proxy/` - HTTP proxy, Anthropic Messages API endpoint
+- `internal/router/` - Route detection, provider selection, failover
+- `internal/transformer/` - Direct format conversion (Anthropic ↔ Provider)
+- `internal/usage/` - SQLite usage tracking with buffered writes
 
-**HTTP Proxy Layer (`internal/proxy/`)**
-- Implements Anthropic Messages API endpoint (`/v1/messages`)
-- Validates requests (max 50MB), handles SSE streaming
-- Integrates router, transformer, and usage tracker via adapter pattern
+---
 
-**Router Engine (`internal/router/`)**
-- Detects route type based on request characteristics (thinking level, images, web search, etc.)
-- Selects appropriate `provider:model` from route configuration
-- Manages sequential failover with configurable retries
+## ⚠️ Critical Implementation Rules
 
-**Transformer Layer (`internal/transformer/`)**
-- **Unified Format**: Provider-agnostic intermediate representation
-- **Interface**: All providers implement `Transformer` interface with:
-  - `TransformRequestIn/Out`: Anthropic ↔ Unified ↔ Provider HTTP Request
-  - `TransformResponseIn/Out`: Provider Response ↔ Unified ↔ Anthropic
-  - `TransformSSEEvent`: Streaming event transformation
-- **Providers**: anthropic, openai, openrouter, gemini, qwen, glm, minimax
+### 1. Usage Tracking in Streaming (CRITICAL)
 
-**Usage Tracking (`internal/usage/`)**
-- SQLite database at `~/.cc-modelrouter/usage.db`
-- Buffered writing with periodic flush
-- Tracks actual provider-reported tokens (input + output)
-- **Critical**: Extracts usage from `message_delta` events in streaming responses
-
-**Daemon Management (`internal/daemon/`)**
-- Instance isolation for concurrent project support
-- Dynamic port allocation to avoid conflicts
-- Metadata stored in `~/.cc-modelrouter/instances/<instance-id>.json`
-
-### Route Detection Logic
-
-The router automatically selects routes based on request characteristics:
-
-| Route | Trigger | Detection |
-|-------|---------|-----------|
-| `background` | Claude Code background agent | Model contains "claude" + "haiku" |
-| `ultrathink` | Maximum thinking | `budget_tokens >= 32,000` |
-| `thinkMore` | Enhanced thinking | `budget_tokens >= 10,000` |
-| `think` | Basic thinking | `budget_tokens >= 4,000` |
-| `longContext` | Large context | Token count > 60,000 |
-| `image` | Image content | Request contains image blocks |
-| `webSearch` | Web search enabled | Tool names contain "web"/"search" |
-| `default` | Fallback | All other requests |
-
-**Thinking level fallback**: If `ultrathink` not configured, falls back to `thinkMore`, then `think`.
-
-### Configuration
-
-**File Locations:**
-- Global: `~/.cc-modelrouter/config.json`
-- Project: `<project>/.cc-modelrouter/config.json` (overrides global entirely)
-
-**Environment Variables:**
-- Use `${VAR_NAME}` syntax for API keys
-- Required: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `BIGMODEL_API_KEY`, etc.
-
-**Config Structure:**
-```json
-{
-  "server": {"port": 8081, "host": "localhost"},
-  "providers": {
-    "<name>": {
-      "apiKey": "${API_KEY}",
-      "baseURL": "https://api.example.com",
-      "models": ["model-1", "model-2"]
-    }
-  },
-  "router": {
-    "routes": {
-      "default": "provider:model;provider2:model2",
-      "think": "provider:model"
-    },
-    "maxRetries": 2,
-    "retryDelay": "500ms"
-  }
-}
-```
-
-Routes are semicolon-separated lists of `provider:model` pairs for failover.
-
-## Important Implementation Details
-
-### Usage Tracking in Streaming Responses
-
-**Critical for accurate token tracking**: Some providers (notably GLM) send both `input_tokens` and `output_tokens` in `message_delta` events during streaming. The handler must extract both:
+Some providers (GLM) send both `input_tokens` and `output_tokens` in `message_delta` events during streaming:
 
 ```go
-// In handler.go tryStreamingTarget:
+// In handler.go tryStreamingTarget - extract from message_delta:
 var totalInputTokens int
 var totalOutputTokens int
 
-// Extract from message_delta events:
 if te.EventType == "message_delta" {
     if usage, ok := eventData["usage"].(map[string]interface{}); ok {
         if outputTokens, ok := usage["output_tokens"].(float64); ok {
@@ -181,107 +112,284 @@ if te.EventType == "message_delta" {
 }
 ```
 
-If provider doesn't send `input_tokens` in streaming, the code falls back to `estimateTokens(req)` (÷4 character count).
+**Fallback:** If provider doesn't send `input_tokens` in streaming, fall back to `estimateTokens(req)` (÷4 character count).
 
-### Transformer Implementation Pattern
+---
 
-When adding a new provider transformer:
+### 2. Secret Handling in Logs (CRITICAL - SECURITY)
 
-1. Implement `Transformer` interface in `internal/transformer/providers/`
-2. Add to registry in `internal/transformer/registry.go`
-3. Create converter functions in `internal/transformer/converters/` if needed
-4. Handle both non-streaming and streaming responses
-5. For streaming: generate synthetic `message_delta` events with `output_tokens` if provider doesn't send them
+**API keys, tokens, and secrets MUST NEVER appear in log files.**
 
-**Streaming SSE Event Handling:**
-- Use `transformer.SSEEvent` struct for event transformation
-- Generate `message_start`, `content_block_delta`, `message_delta`, `message_stop` events
-- `message_delta` should include `usage.output_tokens` for proper tracking
+**Sensitive headers automatically redacted:**
+- `Authorization` (Bearer tokens)
+- `X-Api-Key` (Anthropic API keys)
+- `X-Auth-Token`
+- `Cookie` / `Set-Cookie`
+- `Proxy-Authorization`
+- `X-BigModel-Api-Key`
+- `X-OpenRouter-Api-Key`
 
-### Request Interceptors
+**Always use sanitization library:**
 
-Interceptors provide cross-cutting concerns at three points:
-- **Request**: Before routing (validation, logging)
-- **Response**: After provider response (metrics, validation)
-- **Streaming**: Per SSE event (modification, filtering)
+```go
+import "github.com/iimmutable/cc-modelrouter/internal/logging"
 
-Add via handler methods: `AddRequestInterceptor`, `AddResponseInterceptor`, `AddStreamingInterceptor`
+// ✅ CORRECT - Headers are sanitized:
+logging.Debugf("[PROXY REQUEST] Headers: %s", logging.SanitizeHeadersString(req.Header))
 
-### Testing Patterns
+// ❌ WRONG - Leaks API keys:
+logging.Debugf("[PROXY REQUEST] Headers: %v", req.Header)
+```
 
-- **Unit tests**: Alongside source files (`*_test.go`)
-- **Table-driven tests**: For multiple scenarios
-- **Integration tests**: In `test/integration/` with `-tags=integration`
-- **Mock HTTP clients**: Use `httptest.NewServer` for provider testing
+**Redaction format:**
+```
+X-Api-Key:[sk-ant-**************** [REDACTED]]
+Authorization:[Bearer**************** [REDACTED]]
+```
+
+**Verify before commit:**
+```bash
+go test -v ./test/security
+```
+
+---
+
+### 3. Files API Status (IMPORTANT - NOT IMPLEMENTED)
+
+**Claude Code does NOT use Anthropic's Files API.**
+
+**What IS implemented:**
+- API endpoints `/v1/files` (for API completeness)
+- Type support: `DocumentSource` with `file_id` references
+- Document block types in transformers
+
+**What is NOT implemented:**
+- File storage (mock responses only)
+- File resolution (`file_id` not resolved)
+- File content retrieval
+
+**Behavior when request contains document block with `file_id`:**
+
+For Anthropic provider:
+- Passes through unchanged
+- **BUT won't work** - we don't proxy to real Anthropic Files API
+
+For other providers (OpenAI, Gemini, GLM):
+- Logs warning
+- Uses placeholder text: `[Document: Report.pdf - file_id: file-abc123]`
+
+**Why this exists:**
+- API specification compliance
+- Future-proofing if Files API support needed
+- Type safety for request parsing
+
+**Since Claude Code doesn't use Files API, implementing storage/resolution would be YAGNI.**
+
+**If needed:** See `plans/2026-03-06-file-resolution-layer-implementation.md`
+
+---
+
+### 4. Test File Organization (ENFORCED BY PRE-COMMIT HOOK)
+
+Tests must follow Go's black-box/white-box testing patterns:
+
+| Test Type | Location | Package | Access |
+|-----------|----------|---------|--------|
+| **Black-box** | `<module>/test/` | `package <module>_test` | Exported members only |
+| **White-box** | `<module>/` (alongside source) | `package <module>` | Private + exported members |
+| **Cross-module** | `test/` (root) | Varies | Multiple modules |
+
+**Examples:**
+
+| Location | Status | Reason |
+|----------|--------|--------|
+| `internal/proxy/test/handler_test.go` | ✅ Correct | Black-box test |
+| `internal/proxy/handler_test.go` | ✅ Allowed | White-box (needs private access) |
+| `test/integration/provider_test.go` | ✅ Correct | Cross-module test |
+| `internal/proxy/utils_test.go` (no `utils.go`) | ❌ Wrong | Should be in `test/` subfolder |
+
+**Pre-commit hook validates test locations.** See `.githooks/pre-commit`.
+
+---
+
+## 🔧 Implementation Patterns
+
+### Adding a New Transformer
+
+1. **Create transformer** in `internal/transformer/transformers/<name>.go`
+2. **Implement `Transformer` interface:**
+   - `Name()` - Transformer identifier
+   - `Endpoint()` - API endpoint path
+   - `PrepareRequest()` - Convert Anthropic → Provider HTTP request
+   - `ParseResponse()` - Convert Provider HTTP response → Anthropic
+   - `SupportsStreaming()` - Boolean
+   - `TransformStreamEvent()` - Convert Provider SSE → Anthropic SSE
+3. **Register** in `internal/cli/start.go` or `internal/cli/code.go`
+4. **Handle streaming:** Generate synthetic `message_delta` events with `output_tokens` if provider doesn't send them
+
+**SSE events to generate for streaming:**
+- `message_start`
+- `content_block_delta`
+- `message_delta` (must include `usage.output_tokens`)
+- `message_stop`
+
+---
 
 ### Failover Strategy
 
-The router implements **sequential failover**:
-1. Try each `provider:model` in route configuration order
+Router implements **sequential failover**:
+
+1. Try each `provider:model` in route config order
 2. After exhausting list, loop back to beginning
 3. Maximum attempts: `2 × number of providers`
 4. Each attempt = 1 request (no per-provider retries by default)
 
-### Error Handling
+**Example:**
+```json
+"default": "openrouter:claude-sonnet-4;bigmodel:glm-4.7"
+```
 
-- Provider errors: Return to client with proper HTTP status codes
-- Transform errors: Log and skip invalid SSE events, don't fail entire stream
-- Timeout errors: Configurable per provider in config
-- All errors logged with context (provider, model, route)
+Try order: `openrouter` → `bigmodel` → `openrouter` → `bigmodel` (max 4 attempts)
 
-## Files API Status
+---
 
-**IMPORTANT: Claude Code does NOT use Anthropic's Files API.**
+### Request Interceptors
 
-### What IS Implemented
+Interceptors provide cross-cutting concerns at three points:
 
-- **API Endpoints**: `/v1/files` endpoints exist for Anthropic API completeness
-- **Type Support**: ContentBlock types include `document` with `DocumentSource` for file_id references
-- **Transformers**: Document blocks are recognized but use placeholder text for non-Anthropic providers
+- **Request interceptors:** Before routing (validation, logging)
+- **Response interceptors:** After provider response (metrics, validation)
+- **Streaming interceptors:** Per SSE event (modification, filtering)
 
-### What is NOT Implemented
+Add via handler methods:
+- `AddRequestInterceptor(fn)`
+- `AddResponseInterceptor(fn)`
+- `AddStreamingInterceptor(fn)`
 
-- **File Storage**: Files are NOT actually stored (mock responses only)
-- **File Resolution**: Document blocks with `file_id` are NOT resolved when routing to non-Anthropic providers
-- **File Content Retrieval**: No mechanism exists to fetch file content by file_id
+---
 
-### Behavior
+## 🎯 Route Detection Logic
 
-When a request contains a document block with file_id:
+Router automatically selects routes based on request characteristics:
+
+| Route | Trigger | Detection Method |
+|-------|---------|-----------------|
+| `background` | Claude Code background agent | Model contains "claude" + "haiku" |
+| `ultrathink` | Maximum thinking | `budget_tokens >= 32,000` |
+| `thinkMore` | Enhanced thinking | `budget_tokens >= 10,000` |
+| `think` | Basic thinking | `budget_tokens >= 4,000` |
+| `longContext` | Large context | Token count > 60,000 |
+| `image` | Image content | Request contains image blocks |
+| `webSearch` | Web search enabled | Tool names contain "web"/"search" |
+| `default` | Fallback | All other requests |
+
+**Thinking level fallback:** If `ultrathink` not configured, falls back to `thinkMore`, then `think`.
+
+---
+
+## ⚙️ Configuration
+
+### File Locations
+- **Global:** `~/.cc-modelrouter/config.json`
+- **Project:** `<project>/.cc-modelrouter/config.json`
+
+**Important:** Project config **completely overrides** global config (not merged).
+
+### Environment Variables
+Use `${VAR_NAME}` syntax for API keys:
 ```json
 {
-  "type": "document",
-  "source": {"type": "file", "file_id": "file-abc123"},
-  "title": "Report.pdf"
+  "providers": {
+    "openrouter": {
+      "apiKey": "${OPENROUTER_API_KEY}"
+    }
+  }
 }
 ```
 
-**For Anthropic provider**: Passes through unchanged (but Anthropic won't recognize the file_id since we don't proxy to real Files API)
+Required environment variables:
+- `OPENROUTER_API_KEY`
+- `GEMINI_API_KEY`
+- `BIGMODEL_API_KEY`
+- etc. (depends on providers used)
 
-**For other providers (OpenAI, Gemini, GLM, etc.)**: A warning is logged and placeholder text is used:
+### Route Format
+Semicolon-separated `provider:model` pairs for failover:
+```json
+{
+  "router": {
+    "routes": {
+      "default": "openrouter:anthropic/claude-sonnet-4;bigmodel:glm-4.7",
+      "think": "openrouter:anthropic/claude-opus-4"
+    }
+  }
+}
 ```
-[Document: Report.pdf - file_id: file-abc123]
+
+---
+
+## 🧪 Testing Patterns
+
+### Table-Driven Tests
+For multiple scenarios:
+```go
+tests := []struct{
+    name string
+    input string
+    want string
+}{
+    {"case1", "input1", "output1"},
+    {"case2", "input2", "output2"},
+}
+for _, tt := range tests {
+    t.Run(tt.name, func(t *testing.T) {
+        // test logic
+    })
+}
 ```
 
-### Why This Exists
+### Mock HTTP Clients
+Use `httptest.NewServer` for provider testing:
+```go
+server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    // mock response
+}))
+defer server.Close()
+```
 
-The Files API handlers and document types exist for:
-1. **API Specification Compliance**: To match Anthropic's published API
-2. **Future Use**: If Files API support is needed for direct (non-Claude Code) usage
-3. **Type Safety**: To properly parse and validate incoming requests
+### Coverage
+```bash
+go test ./... -coverprofile=coverage.out
+go tool cover -html=coverage.out
+```
 
-Since Claude Code doesn't use Files API, implementing file storage/resolution would be premature (YAGNI principle).
+---
 
-### If You Need Files API Support
+## 🚨 Error Handling
 
-If direct API usage requires working file upload/retrieval:
-1. Implement a FileStore with SQLite or filesystem backend
-2. Update Files API handlers to store actual files
-3. Update transformers to resolve file_id and inline content for non-Anthropic providers
-4. See `plans/2026-03-06-file-resolution-layer-implementation.md` for detailed implementation plan
+| Error Type | Behavior |
+|------------|----------|
+| Provider errors | Return to client with proper HTTP status codes |
+| Transform errors | Log and skip invalid SSE events (don't fail stream) |
+| Timeout errors | Configurable per provider in config |
+| All errors | Log with context (provider, model, route) |
 
-## Log File Locations
+---
 
-- **Instance logs**: `~/.cc-modelrouter/logs/inst_YYYYMMDD_HHMMSS.log`
-- **Per-instance logging**: Each `ccrouter code` instance gets its own log file
-- **Log levels**: debug, info, warn, error (configurable via `--log-level`)
+## 📝 Log File Locations
+
+- **Instance logs:** `~/.cc-modelrouter/logs/inst_YYYYMMDD_HHMMSS.log`
+- **Per-instance:** Each `ccrouter code` instance gets own log file
+- **Levels:** debug, info, warn, error (configurable via `--log-level`)
+
+---
+
+## 📚 For More Information
+
+See [README.md](README.md) for:
+- Installation and quick start guide
+- Full architecture diagrams
+- Provider compatibility tables
+- Unified intermediate format specification
+- Complete project structure
+- Transformer interface details

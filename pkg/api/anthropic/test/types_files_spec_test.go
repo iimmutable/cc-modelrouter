@@ -1,9 +1,11 @@
-package anthropic
+package anthropic_test
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
 // TestFileUploadResponseSpecCompliance tests that FileUploadResponse
@@ -21,7 +23,7 @@ func TestFileUploadResponseSpecCompliance(t *testing.T) {
 		//   "type": "file"
 		// }
 
-		response := FileUploadResponse{
+		response := anthropic.FileUploadResponse{
 			ID:           "file_abc123",
 			Type:         "file",
 			CreatedAt:    time.Date(2023, 11, 7, 5, 31, 56, 0, time.UTC),
@@ -84,7 +86,7 @@ func TestFileUploadResponseSpecCompliance(t *testing.T) {
 	})
 
 	t.Run("created_at is RFC 3339 timestamp string", func(t *testing.T) {
-		response := FileUploadResponse{
+		response := anthropic.FileUploadResponse{
 			ID:        "file_test",
 			CreatedAt: time.Date(2023, 11, 7, 5, 31, 56, 0, time.UTC),
 		}

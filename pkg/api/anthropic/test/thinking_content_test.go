@@ -1,9 +1,11 @@
-package anthropic
+package anthropic_test
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
 // Test helper function for creating string pointers in tests
@@ -15,7 +17,7 @@ func testStrPtr(s string) *string {
 // with only a thinking block is marshaled as an array, which may cause
 // provider validation errors.
 func TestMessageContent_SingleThinkingBlock_ArrayFormat(t *testing.T) {
-	content := MessageContent{
+	content := anthropic.MessageContent{
 		{Type: "thinking", Thinking: "This is my thinking process"},
 	}
 
@@ -44,7 +46,7 @@ func TestMessageContent_SingleThinkingBlock_ArrayFormat(t *testing.T) {
 // TestMessageContent_SingleTextBlock_StringFormat tests that a message
 // with only a text block is marshaled as a string.
 func TestMessageContent_SingleTextBlock_StringFormat(t *testing.T) {
-	content := MessageContent{
+	content := anthropic.MessageContent{
 		{Type: "text", Text: "Hello"},
 	}
 
@@ -69,7 +71,7 @@ func TestMessageContent_SingleTextBlock_StringFormat(t *testing.T) {
 // TestMessageContent_ThinkingPlusText_ArrayFormat tests that a message
 // with thinking followed by text is marshaled as an array.
 func TestMessageContent_ThinkingPlusText_ArrayFormat(t *testing.T) {
-	content := MessageContent{
+	content := anthropic.MessageContent{
 		{Type: "thinking", Thinking: "Thinking..."},
 		{Type: "text", Text: "Response"},
 	}
@@ -91,7 +93,7 @@ func TestMessageContent_ThinkingPlusText_ArrayFormat(t *testing.T) {
 // TestMessageContent_EmptyThinkingBlock_ArrayFormat tests that a message
 // with an empty thinking block is marshaled as an array.
 func TestMessageContent_EmptyThinkingBlock_ArrayFormat(t *testing.T) {
-	content := MessageContent{
+	content := anthropic.MessageContent{
 		{Type: "thinking", Thinking: "", Signature: testStrPtr("")},
 	}
 
@@ -113,17 +115,17 @@ func TestMessageContent_EmptyThinkingBlock_ArrayFormat(t *testing.T) {
 // TestFullRequest_WithThinkingBlock tests marshaling a complete request
 // with thinking blocks to see the exact JSON structure.
 func TestFullRequest_WithThinkingBlock(t *testing.T) {
-	req := &Request{
+	req := &anthropic.Request{
 		Model:     "claude-sonnet-4.5",
 		MaxTokens: 4096,
-		Messages: []Message{
+		Messages: []anthropic.Message{
 			{
 				Role:    "user",
-				Content: MessageContent{{Type: "text", Text: "Hello"}},
+				Content: anthropic.MessageContent{{Type: "text", Text: "Hello"}},
 			},
 			{
 				Role: "assistant",
-				Content: MessageContent{
+				Content: anthropic.MessageContent{
 					{Type: "thinking", Thinking: "Let me think about this..."},
 					{Type: "text", Text: "I think the answer is 42"},
 				},
@@ -184,17 +186,17 @@ func TestFullRequest_WithThinkingBlock(t *testing.T) {
 // TestFullRequest_OnlyThinkingBlock tests the problematic case:
 // a message with ONLY a thinking block (no text).
 func TestFullRequest_OnlyThinkingBlock(t *testing.T) {
-	req := &Request{
+	req := &anthropic.Request{
 		Model:     "claude-sonnet-4.5",
 		MaxTokens: 4096,
-		Messages: []Message{
+		Messages: []anthropic.Message{
 			{
 				Role:    "user",
-				Content: MessageContent{{Type: "text", Text: "Hello"}},
+				Content: anthropic.MessageContent{{Type: "text", Text: "Hello"}},
 			},
 			{
 				Role:    "assistant",
-				Content: MessageContent{{Type: "thinking", Thinking: "Deep thinking..."}},
+				Content: anthropic.MessageContent{{Type: "thinking", Thinking: "Deep thinking..."}},
 			},
 		},
 	}
@@ -252,12 +254,12 @@ func TestFullRequest_OnlyThinkingBlock(t *testing.T) {
 func TestContentBlock_ThinkingMarshaling(t *testing.T) {
 	tests := []struct {
 		name     string
-		block    ContentBlock
+		block    anthropic.ContentBlock
 		expected string
 	}{
 		{
 			name: "thinking without signature (should omit field)",
-			block: ContentBlock{
+			block: anthropic.ContentBlock{
 				Type:     "thinking",
 				Thinking: "Thinking content",
 			},
@@ -265,7 +267,7 @@ func TestContentBlock_ThinkingMarshaling(t *testing.T) {
 		},
 		{
 			name: "thinking with nil signature (should omit field)",
-			block: ContentBlock{
+			block: anthropic.ContentBlock{
 				Type:     "thinking",
 				Thinking: "Thinking content",
 				// Signature is nil (default zero value for pointer), field should be omitted
@@ -274,7 +276,7 @@ func TestContentBlock_ThinkingMarshaling(t *testing.T) {
 		},
 		{
 			name: "thinking with empty signature (should include field as empty string)",
-			block: ContentBlock{
+			block: anthropic.ContentBlock{
 				Type:     "thinking",
 				Thinking: "Thinking content",
 				Signature: testStrPtr(""),
@@ -283,7 +285,7 @@ func TestContentBlock_ThinkingMarshaling(t *testing.T) {
 		},
 		{
 			name: "thinking with non-empty signature (should include field)",
-			block: ContentBlock{
+			block: anthropic.ContentBlock{
 				Type:      "thinking",
 				Thinking:  "Thinking content",
 				Signature: testStrPtr("abc123"),
@@ -323,7 +325,7 @@ func TestMessageContent_Unmarshal_RoundTrip(t *testing.T) {
 	// Start with JSON that has a thinking block in array format
 	jsonInput := `[{"type":"thinking","thinking":"Original thinking"}]`
 
-	var content MessageContent
+	var content anthropic.MessageContent
 	if err := json.Unmarshal([]byte(jsonInput), &content); err != nil {
 		t.Fatalf("failed to unmarshal: %v", err)
 	}
@@ -352,17 +354,17 @@ func TestMessageContent_Unmarshal_RoundTrip(t *testing.T) {
 // TestRequest_WithToolResultAndThinking tests a complex scenario
 // with tool_result blocks that might have nested content issues.
 func TestRequest_WithToolResultAndThinking(t *testing.T) {
-	req := &Request{
+	req := &anthropic.Request{
 		Model:     "claude-sonnet-4.5",
 		MaxTokens: 4096,
-		Messages: []Message{
+		Messages: []anthropic.Message{
 			{
 				Role:    "user",
-				Content: MessageContent{{Type: "text", Text: "Use the search tool"}},
+				Content: anthropic.MessageContent{{Type: "text", Text: "Use the search tool"}},
 			},
 			{
 				Role: "assistant",
-				Content: MessageContent{
+				Content: anthropic.MessageContent{
 					{Type: "thinking", Thinking: "I need to search..."},
 					{
 						Type: "tool_use",
@@ -374,11 +376,11 @@ func TestRequest_WithToolResultAndThinking(t *testing.T) {
 			},
 			{
 				Role: "user",
-				Content: MessageContent{
+				Content: anthropic.MessageContent{
 					{
 						Type: "tool_result",
 						ID:   "toolu_123",
-						Content: MessageContent{
+						Content: anthropic.MessageContent{
 							{Type: "text", Text: "Search results..."},
 						},
 					},
@@ -386,7 +388,7 @@ func TestRequest_WithToolResultAndThinking(t *testing.T) {
 			},
 			{
 				Role:    "assistant",
-				Content: MessageContent{{Type: "thinking", Thinking: "Analyzing results..."}},
+				Content: anthropic.MessageContent{{Type: "thinking", Thinking: "Analyzing results..."}},
 			},
 		},
 	}
@@ -444,20 +446,20 @@ func TestRequest_WithToolResultAndThinking(t *testing.T) {
 func TestMessageContent_DetectPotentialProviderIssues(t *testing.T) {
 	testCases := []struct {
 		name        string
-		content     MessageContent
+		content     anthropic.MessageContent
 		shouldWarn  bool
 		warnReason  string
 	}{
 		{
 			name: "single text block (OK)",
-			content: MessageContent{
+			content: anthropic.MessageContent{
 				{Type: "text", Text: "Hello"},
 			},
 			shouldWarn: false,
 		},
 		{
 			name: "single thinking block (PROBLEMATIC)",
-			content: MessageContent{
+			content: anthropic.MessageContent{
 				{Type: "thinking", Thinking: "Thinking..."},
 			},
 			shouldWarn: true,
@@ -465,7 +467,7 @@ func TestMessageContent_DetectPotentialProviderIssues(t *testing.T) {
 		},
 		{
 			name: "thinking + text (OK - array is valid)",
-			content: MessageContent{
+			content: anthropic.MessageContent{
 				{Type: "thinking", Thinking: "Thinking..."},
 				{Type: "text", Text: "Response"},
 			},
@@ -473,7 +475,7 @@ func TestMessageContent_DetectPotentialProviderIssues(t *testing.T) {
 		},
 		{
 			name: "multiple text blocks (OK - merged to single)",
-			content: MessageContent{
+			content: anthropic.MessageContent{
 				{Type: "text", Text: "Part 1"},
 				{Type: "text", Text: "Part 2"},
 			},
@@ -509,17 +511,17 @@ func TestMessageContent_DetectPotentialProviderIssues(t *testing.T) {
 // validate when receiving a request.
 func TestSimulatedProviderValidation(t *testing.T) {
 	// Create a request similar to what causes the 400 error
-	req := &Request{
+	req := &anthropic.Request{
 		Model:     "claude-sonnet-4.5",
 		MaxTokens: 4096,
-		Messages: []Message{
+		Messages: []anthropic.Message{
 			{
 				Role:    "user",
-				Content: MessageContent{{Type: "text", Text: "Hello"}},
+				Content: anthropic.MessageContent{{Type: "text", Text: "Hello"}},
 			},
 			{
 				Role:    "assistant",
-				Content: MessageContent{{Type: "thinking", Thinking: "Deep thinking..."}},
+				Content: anthropic.MessageContent{{Type: "thinking", Thinking: "Deep thinking..."}},
 			},
 		},
 	}
@@ -580,7 +582,7 @@ func TestThinkingBlockSignatureHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			block := ContentBlock{
+			block := anthropic.ContentBlock{
 				Type:      "thinking",
 				Thinking:  "Thinking content",
 			}
@@ -614,30 +616,30 @@ func TestThinkingBlockSignatureHandling(t *testing.T) {
 func BenchmarkMessageContent_Marshaling(b *testing.B) {
 	tests := []struct {
 		name    string
-		content MessageContent
+		content anthropic.MessageContent
 	}{
 		{
 			name: "single text",
-			content: MessageContent{
+			content: anthropic.MessageContent{
 				{Type: "text", Text: "Hello world"},
 			},
 		},
 		{
 			name: "single thinking",
-			content: MessageContent{
+			content: anthropic.MessageContent{
 				{Type: "thinking", Thinking: "Thinking content here"},
 			},
 		},
 		{
 			name: "thinking + text",
-			content: MessageContent{
+			content: anthropic.MessageContent{
 				{Type: "thinking", Thinking: "Thinking..."},
 				{Type: "text", Text: "Response"},
 			},
 		},
 		{
 			name: "complex with tool_use",
-			content: MessageContent{
+			content: anthropic.MessageContent{
 				{Type: "thinking", Thinking: "Thinking..."},
 				{Type: "tool_use", ID: "tool_123", Name: "test", Input: json.RawMessage(`{}`)},
 			},
@@ -665,33 +667,33 @@ func TestDebugPrintFullRequest(t *testing.T) {
 	}
 
 	// Simulate a thinkMore route request
-	req := &Request{
+	req := &anthropic.Request{
 		Model:     "claude-opus-4.5",
 		MaxTokens: 8192,
 		Stream:    true,
-		Thinking: &ThinkingConfig{
+		Thinking: &anthropic.ThinkingConfig{
 			Type:         "enabled",
 			BudgetTokens: 10000,
 		},
-		Messages: []Message{
+		Messages: []anthropic.Message{
 			{
 				Role:    "user",
-				Content: MessageContent{{Type: "text", Text: "Help me with a complex task"}},
+				Content: anthropic.MessageContent{{Type: "text", Text: "Help me with a complex task"}},
 			},
 			{
 				Role: "assistant",
-				Content: MessageContent{
+				Content: anthropic.MessageContent{
 					{Type: "thinking", Thinking: "Let me break this down systematically..."},
 					{Type: "text", Text: "I'll help you with that."},
 				},
 			},
 			{
 				Role:    "user",
-				Content: MessageContent{{Type: "text", Text: "Tell me more"}},
+				Content: anthropic.MessageContent{{Type: "text", Text: "Tell me more"}},
 			},
 			{
 				Role:    "assistant",
-				Content: MessageContent{{Type: "thinking", Thinking: "Considering the follow-up..."}},
+				Content: anthropic.MessageContent{{Type: "thinking", Thinking: "Considering the follow-up..."}},
 			},
 		},
 	}

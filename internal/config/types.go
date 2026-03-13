@@ -38,12 +38,31 @@ type ServerConfig struct {
 	Host string `json:"host"`
 }
 
+// CompactionConfig controls how oversized requests are compacted to fit within provider limits.
+type CompactionConfig struct {
+	// Method is "llm" (default) to summarize via LLM, or "trim" to drop oldest messages.
+	Method string `json:"method,omitempty"`
+
+	// SummarizeProvider is the provider name used for summarization (auto-detect if empty).
+	SummarizeProvider string `json:"summarizeProvider,omitempty"`
+
+	// SummarizeModel is the model for summarization (optional, uses provider default).
+	SummarizeModel string `json:"summarizeModel,omitempty"`
+}
+
 // ProviderConfig represents a provider configuration.
 type ProviderConfig struct {
-	APIKey      string   `json:"apiKey"`
-	BaseURL     string   `json:"baseURL"`
-	Models      []string `json:"models"`
-	Transformer string   `json:"transformer,omitempty"`
+	APIKey            string   `json:"apiKey"`
+	BaseURL           string   `json:"baseURL"`
+	Models            []string `json:"models"`
+	Transformer       string   `json:"transformer,omitempty"`
+	DisableKeepAlives bool     `json:"disableKeepAlives,omitempty"` // Disable HTTP keep-alive for providers with connection issues
+
+	// MaxRequestBodyBytes is the maximum request body size in bytes for this provider.
+	// 0 means no limit. Requests exceeding this limit trigger compaction (if configured)
+	// or are skipped during failover.
+	MaxRequestBodyBytes int64            `json:"maxRequestBodyBytes,omitempty"`
+	Compaction          *CompactionConfig `json:"compaction,omitempty"`
 }
 
 // Validate validates the provider configuration.

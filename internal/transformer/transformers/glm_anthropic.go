@@ -2,6 +2,7 @@ package transformers
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -96,12 +97,13 @@ func (t *GLMAnthropicTransformer) PrepareRequest(req *anthropic.Request, baseURL
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// DIAGNOSTIC: Log request body for debugging
+	// DIAGNOSTIC: Log request body for debugging (with additional validation info)
 	bodyStr := string(body)
+	bodyHash := fmt.Sprintf("%x", sha256.Sum256(body))
 	if len(bodyStr) > 2000 {
-		logging.StreamDebugf("[PROXY REQUEST BODY] Model: %s, Body (first 2000 chars): %s...", model, bodyStr[:2000])
+		logging.StreamDebugf("[PROXY REQUEST BODY] Model: %s, Size: %d bytes, Hash: %s..., Body (first 2000 chars): %s...", model, len(body), bodyHash[:16], bodyStr[:2000])
 	} else {
-		logging.StreamDebugf("[PROXY REQUEST BODY] Model: %s, Body: %s", model, bodyStr)
+		logging.StreamDebugf("[PROXY REQUEST BODY] Model: %s, Size: %d bytes, Hash: %s, Body: %s", model, len(body), bodyHash, bodyStr)
 	}
 
 	// Build endpoint
@@ -109,6 +111,8 @@ func (t *GLMAnthropicTransformer) PrepareRequest(req *anthropic.Request, baseURL
 	if !strings.HasSuffix(baseURL, "/v1/messages") {
 		endpoint = baseURL + "/v1/messages"
 	}
+
+	logging.StreamDebugf("[GLM REQUEST] URL: %s, Headers: x-api-key=<redacted>, anthropic-version=2023-06-01, User-Agent=cc-modelrouter/1.0", endpoint)
 
 	// Create HTTP request
 	httpReq, err := http.NewRequest("POST", endpoint, bytes.NewReader(body))
@@ -125,6 +129,9 @@ func (t *GLMAnthropicTransformer) PrepareRequest(req *anthropic.Request, baseURL
 	httpReq.GetBody = func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(bodyCopy)), nil
 	}
+
+	// CRITICAL: Set explicit Content-Length to prevent any ambiguity
+	httpReq.ContentLength = int64(len(body))
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", apiKey)

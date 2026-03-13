@@ -6,6 +6,11 @@ import (
 	"testing"
 )
 
+// testStrPtr is a helper function for creating string pointers in tests.
+func testStrPtr(s string) *string {
+	return &s
+}
+
 func TestRequestMarshaling(t *testing.T) {
 	req := &Request{
 		Model:     "claude-3-5-sonnet-20241022",
@@ -906,6 +911,234 @@ func TestContentBlockThinkingUnmarshaling(t *testing.T) {
 				t.Errorf("expected signature %s, got %s", *tt.expected.Signature, *got.Signature)
 			}
 		})
+	}
+}
+
+// TestRedactedThinkingBlockRoundTrip tests that redacted_thinking blocks survive
+// a marshal → unmarshal → marshal round-trip without losing the data field.
+// This is critical for OpenRouter compatibility — missing data causes 400 errors.
+func TestRedactedThinkingBlockRoundTrip(t *testing.T) {
+	tests := []struct {
+		name  string
+		block ContentBlock
+	}{
+		{
+			name: "redacted_thinking with data",
+			block: ContentBlock{
+				Type: "redacted_thinking",
+				Data: "base64encodeddata==",
+			},
+		},
+		{
+			name: "redacted_thinking with long data",
+			block: ContentBlock{
+				Type: "redacted_thinking",
+				Data: "VGhpcyBpcyBhIHRlc3QgZGF0YSBmb3IgcmVkYWN0ZWQgdGhpbmtpbmcgYmxvY2tz",
+			},
+		},
+		{
+			name: "redacted_thinking with empty data",
+			block: ContentBlock{
+				Type: "redacted_thinking",
+				Data: "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal
+			data, err := json.Marshal(tt.block)
+			if err != nil {
+				t.Fatalf("failed to marshal: %v", err)
+			}
+
+			// Unmarshal
+			var got ContentBlock
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("failed to unmarshal: %v", err)
+			}
+
+			// Verify type preserved
+			if got.Type != tt.block.Type {
+				t.Errorf("type changed: %s -> %s", tt.block.Type, got.Type)
+			}
+
+			// Verify data preserved
+			if got.Data != tt.block.Data {
+				t.Errorf("data changed: %s -> %s", tt.block.Data, got.Data)
+			}
+
+			// Marshal again and verify identical
+			data2, err := json.Marshal(got)
+			if err != nil {
+				t.Fatalf("failed to re-marshal: %v", err)
+			}
+
+			if string(data) != string(data2) {
+				t.Errorf("round-trip mismatch:\n  first:  %s\n  second: %s", string(data), string(data2))
+			}
+		})
+	}
+}
+
+// TestRedactedThinkingMarshaling tests exact JSON output for redacted_thinking blocks.
+func TestRedactedThinkingMarshaling(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          ContentBlock
+		expectedOutput string
+	}{
+		{
+			name: "redacted_thinking with data",
+			input: ContentBlock{
+				Type: "redacted_thinking",
+				Data: "abc123==",
+			},
+			expectedOutput: `{"type":"redacted_thinking","data":"abc123=="}`,
+		},
+		{
+			name: "redacted_thinking with empty data",
+			input: ContentBlock{
+				Type: "redacted_thinking",
+				Data: "",
+			},
+			expectedOutput: `{"type":"redacted_thinking","data":""}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.input)
+			if err != nil {
+				t.Fatalf("failed to marshal: %v", err)
+			}
+
+			got := string(data)
+			if got != tt.expectedOutput {
+				t.Errorf("expected:\n  %s\ngot:\n  %s", tt.expectedOutput, got)
+			}
+		})
+	}
+}
+
+// TestRedactedThinkingUnmarshaling tests that redacted_thinking blocks can be
+// unmarshaled from JSON with the data field preserved.
+func TestRedactedThinkingUnmarshaling(t *testing.T) {
+	tests := []struct {
+		name        string
+		json        string
+		expected    ContentBlock
+		expectError bool
+	}{
+		{
+			name: "redacted_thinking with data",
+			json: `{"type":"redacted_thinking","data":"base64data=="}`,
+			expected: ContentBlock{
+				Type: "redacted_thinking",
+				Data: "base64data==",
+			},
+		},
+		{
+			name: "redacted_thinking without data field",
+			json: `{"type":"redacted_thinking"}`,
+			expected: ContentBlock{
+				Type: "redacted_thinking",
+				Data: "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got ContentBlock
+			err := json.Unmarshal([]byte(tt.json), &got)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("failed to unmarshal: %v", err)
+			}
+
+			if got.Type != tt.expected.Type {
+				t.Errorf("expected type %s, got %s", tt.expected.Type, got.Type)
+			}
+
+			if got.Data != tt.expected.Data {
+				t.Errorf("expected data %s, got %s", tt.expected.Data, got.Data)
+			}
+		})
+	}
+}
+
+// TestRedactedThinkingInConversationHistory tests that a request with
+// redacted_thinking blocks in conversation history round-trips correctly.
+// This simulates the exact scenario that causes OpenRouter 400 errors.
+func TestRedactedThinkingInConversationHistory(t *testing.T) {
+	req := &Request{
+		Model:     "claude-sonnet-4",
+		MaxTokens: 4096,
+		Messages: []Message{
+			{
+				Role:    RoleUser,
+				Content: MessageContent{{Type: "text", Text: "Hello"}},
+			},
+			{
+				Role: RoleAssistant,
+				Content: MessageContent{
+					{Type: "thinking", Thinking: "Let me think...", Signature: testStrPtr("sig123")},
+					{Type: "redacted_thinking", Data: "ZW5jcnlwdGVkX3RoaW5raW5n"},
+					{Type: "text", Text: "Here is my answer"},
+				},
+			},
+			{
+				Role:    RoleUser,
+				Content: MessageContent{{Type: "text", Text: "Follow up"}},
+			},
+		},
+	}
+
+	// Marshal
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	// Unmarshal
+	var unmarshaled Request
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	// Verify the redacted_thinking block preserved its data
+	assistantContent := unmarshaled.Messages[1].Content
+	var foundRedacted bool
+	for _, block := range assistantContent {
+		if block.Type == "redacted_thinking" {
+			foundRedacted = true
+			if block.Data != "ZW5jcnlwdGVkX3RoaW5raW5n" {
+				t.Errorf("redacted_thinking data not preserved: got %q", block.Data)
+			}
+		}
+	}
+	if !foundRedacted {
+		t.Error("redacted_thinking block not found in unmarshaled content")
+	}
+
+	// Marshal again — verify data field still present in JSON output
+	data2, err := json.Marshal(unmarshaled)
+	if err != nil {
+		t.Fatalf("failed to re-marshal: %v", err)
+	}
+
+	jsonStr := string(data2)
+	if !strings.Contains(jsonStr, `"data":"ZW5jcnlwdGVkX3RoaW5raW5n"`) && !strings.Contains(jsonStr, `"data": "ZW5jcnlwdGVkX3RoaW5raW5n"`) {
+		t.Errorf("redacted_thinking data field missing in re-marshaled JSON:\n%s", jsonStr)
 	}
 }
 

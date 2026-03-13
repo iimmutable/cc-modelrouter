@@ -33,6 +33,11 @@ Project configuration **completely overrides** global configuration when present
     },
     "maxRetries": 2,
     "retryDelay": "500ms"
+  },
+  "logging": {
+    "enabled": false,
+    "destination": "file",
+    "level": "info"
   }
 }
 ```
@@ -78,7 +83,7 @@ Project configuration **completely overrides** global configuration when present
 | `baseURL` | string | Yes | API base URL |
 | `models` | []string | Yes | List of available models |
 | `transformer` | string | No | Transformer name (defaults to provider name) |
-| `timeout` | string | No | HTTP timeout (e.g., "60s", "90s") |
+| `disableKeepAlives` | bool | No | Disable HTTP keep-alive connections (default: `false`). Use for providers with connection issues. |
 
 ### Supported Providers
 
@@ -174,13 +179,14 @@ If you prefer, you can combine all OpenRouter models into a single provider:
   "qwen": {
     "apiKey": "${DASHSCOPE_API_KEY}",
     "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+    "transformer": "openai",
     "models": ["qwen-turbo", "qwen-plus"]
   }
 }
 ```
 
-- **Transformer**: `anthropic` (Anthropic-compatible)
-- **Auth**: `x-api-key: <key>`
+- **Transformer**: `openai` (OpenAI-compatible format)
+- **Auth**: `Authorization: Bearer`
 
 #### Zhipu GLM (BigModel)
 
@@ -298,6 +304,40 @@ Multiple targets are tried in sequence with failover:
 |-------|------|---------|-------------|
 | `maxRetries` | int | 2 | Max retries per route |
 | `retryDelay` | string | 500ms | Delay between retries |
+
+## Logging Configuration
+
+```json
+{
+  "logging": {
+    "enabled": true,
+    "destination": "file",
+    "filePath": "~/.cc-modelrouter/router.log",
+    "level": "info"
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable logging (opt-in) |
+| `destination` | string | - | `stdout`, `stderr`, `file`, or a custom file path |
+| `filePath` | string | - | Override default log file path |
+| `level` | string | `info` | Log level: `debug`, `info`, `warn`, `error` |
+
+**Default log paths (when destination is `file` or empty):**
+- Without instance: `~/.cc-modelrouter/router.log`
+- With instance: `~/.cc-modelrouter/logs/<instanceID>.log`
+
+**Log levels** (most to least verbose):
+| Level | Description |
+|-------|-------------|
+| `debug` | Full request/response details, headers (sanitized), SSE events |
+| `info` | Route detection, provider selection, request summary |
+| `warn` | Retries, non-fatal errors, filtered events |
+| `error` | Provider errors, transform failures, startup errors |
+
+**CLI override:** `--log-level` and `--log-destination` flags override config settings.
 
 ## Environment Variables
 

@@ -1,10 +1,11 @@
-package transformers
+package transformers_test
 
 import (
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/iimmutable/cc-modelrouter/internal/transformer/transformers"
 	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
@@ -12,7 +13,7 @@ import (
 // preserves all content block types, not just text.
 func TestOpenAITransformer_ContentBlockPreservation(t *testing.T) {
 	t.Run("text only - should work", func(t *testing.T) {
-		transformer := NewOpenAITransformer()
+		transformer := transformers.NewOpenAITransformer()
 
 		req := &anthropic.Request{
 			Model:     "gpt-4",
@@ -49,7 +50,7 @@ func TestOpenAITransformer_ContentBlockPreservation(t *testing.T) {
 	})
 
 	t.Run("text + image - image should be preserved", func(t *testing.T) {
-		transformer := NewOpenAITransformer()
+		transformer := transformers.NewOpenAITransformer()
 
 		req := &anthropic.Request{
 			Model:     "gpt-4-vision-preview",
@@ -103,7 +104,7 @@ func TestOpenAITransformer_ContentBlockPreservation(t *testing.T) {
 	})
 
 	t.Run("text + document - document should be preserved or noted", func(t *testing.T) {
-		transformer := NewOpenAITransformer()
+		transformer := transformers.NewOpenAITransformer()
 
 		req := &anthropic.Request{
 			Model:     "gpt-4",

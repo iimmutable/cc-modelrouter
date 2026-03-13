@@ -2,6 +2,14 @@
 
 A Go-based HTTP proxy server that routes Claude Code requests to multiple LLM providers with format transformation.
 
+---
+
+## For Claude Code & AI Development
+
+**Developers using Claude Code:** See [CLAUDE.md](CLAUDE.md) for AI-specific build commands, implementation patterns, critical warnings, and operational guidance optimized for AI assistants.
+
+---
+
 ## Features
 
 - **Multi-Provider Support**: Route to Anthropic, OpenRouter, Google Gemini, Alibaba Qwen, and Zhipu GLM
@@ -33,7 +41,7 @@ Create `~/.cc-modelrouter/config.json`:
     "openrouter": {
       "apiKey": "${OPENROUTER_API_KEY}",
       "baseURL": "https://openrouter.ai/api",
-      "transformer": "anthropic",
+      "transformer": "openrouter",
       "models": ["anthropic/claude-sonnet-4"]
     },
     "bigmodel": {
@@ -58,11 +66,7 @@ Create `~/.cc-modelrouter/config.json`:
 }
 ```
 
-**Note:** OpenRouter provides two endpoints:
-- **Anthropic-compatible** (`https://openrouter.ai/api`): For Anthropic Claude models only
-- **OpenAI-compatible** (`https://openrouter.ai/api/v1`): For Google, OpenAI, and other models
-
-To use non-Anthropic models via OpenRouter, add a second provider entry:
+**Note:** OpenRouter provides a unified API endpoint (`/v1/messages`) that works with both Anthropic-format models and OpenAI-format models. The key difference is the model identifier:
 ```json
 "openrouter-openai": {
   "apiKey": "${OPENROUTER_API_KEY}",
@@ -105,6 +109,7 @@ claude
 | `ccrouter clean` | Remove stale instance files |
 | `ccrouter config` | Show active configuration |
 | `ccrouter logs [id]` | Show logs for instance |
+| `ccrouter usage [id] [period]` | Show usage statistics |
 
 ## Configuration
 
@@ -156,18 +161,77 @@ Use `${VAR_NAME}` or `$VAR_NAME` syntax for sensitive values:
 }
 ```
 
+### Provider Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `apiKey` | string | API key (supports `${VAR_NAME}` env var syntax) |
+| `baseURL` | string | Provider API base URL |
+| `models` | []string | List of available models |
+| `transformer` | string | Transformer name (defaults to provider name) |
+| `disableKeepAlives` | bool | Disable HTTP keep-alive for providers with connection issues |
+| `timeout` | string | HTTP timeout (e.g., "60s", "90s") |
+
+### Logging Configuration
+
+```json
+{
+  "logging": {
+    "enabled": true,
+    "destination": "file",
+    "filePath": "~/.cc-modelrouter/logs/router.log",
+    "level": "debug"
+  }
+}
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | false | Enable/disable logging (opt-in) |
+| `destination` | string | "file" | Where to write logs: "stdout", "stderr", "file", or a file path |
+| `filePath` | string | ~/.cc-modelrouter/router.log | Specific log file path |
+| `level` | string | "info" | Log level: "debug", "info", "warn", "error" |
+
+**Log Levels:**
+- `debug`: All messages including detailed streaming events
+- `info`: Request/response summaries and warnings
+- `warn`: Only warnings and errors
+- `error`: Only errors
+
+### Usage Tracking
+
+The router tracks token usage statistics per model, route, and instance using SQLite.
+
+```bash
+# Show all-time usage across all instances
+ccrouter usage
+
+# Show usage for specific instance
+ccrouter usage inst_20250315_143022
+
+# Show usage for specific period
+ccrouter usage today
+ccrouter usage this-week
+ccrouter usage this-month
+```
+
+**Period Options:**
+- `all-time` (default), `today`, `this-week`, `last-week`, `this-month`, `last-month`, `this-quarter`, `last-quarter`, `this-year`, `last-year`, or custom range `YYYYMMDD-YYYYMMDD`
+
+Data is stored in `~/.cc-modelrouter/usage.db` with buffered writes (500 records or 3 seconds).
+
 ## Supported Providers
 
 | Provider | Transformer | API Format | Compatible Models |
 |----------|-------------|------------|-------------------|
 | Anthropic | `anthropic` | Native Anthropic | Claude 3.5 Sonnet, Haiku, Opus |
 | OpenAI | `openai` | OpenAI-compatible | GPT-4, GPT-4 Turbo |
-| OpenRouter (Anthropic) | `anthropic` | Anthropic-compatible | Anthropic Claude models only |
-| OpenRouter (OpenAI) | `openai` | OpenAI-compatible | Google, OpenAI, other models |
+| OpenRouter | `openrouter` | Anthropic-compatible | All OpenRouter models |
 | Google Gemini | `gemini` | Gemini native | Gemini Pro, Ultra, Flash |
-| Alibaba Qwen | `anthropic` | Anthropic-compatible | Qwen Turbo, Plus, Max |
-| Zhipu GLM | `anthropic` | Anthropic-compatible | GLM-4, GLM-4 Air |
+| Alibaba Qwen | `openai` | OpenAI-compatible | Qwen Turbo, Plus, Max |
+| Zhipu GLM | `glm-anthropic` | Anthropic-compatible | GLM-4, GLM-4 Air |
 | MiniMax | `anthropic` | Anthropic-compatible | MiniMax models |
+| Aliyun (DashScope) | `glm-anthropic` | Anthropic-compatible | GLM-5, MiniMax-M2.5 |
 
 ## Architecture
 
@@ -260,37 +324,31 @@ Each provider implements the `Transformer` interface:
 
 ```go
 type Transformer interface {
-    // Metadata
+    // Name returns the transformer name (used for registry lookup)
     Name() string
+
+    // Endpoint returns the API endpoint path for this transformer
     Endpoint() string
 
-    // Authentication
-    Auth(req *UnifiedChatRequest, provider Provider) (map[string]string, error)
+    // PrepareRequest converts an Anthropic request to a provider-specific HTTP request
+    PrepareRequest(req *anthropic.Request, baseURL, apiKey, model string) (*http.Request, error)
 
-    // Request transformation: Anthropic → Unified → Provider HTTP Request
-    TransformRequestIn(req *anthropic.Request) (*UnifiedChatRequest, error)
-    TransformRequestOut(unified *UnifiedChatRequest, baseURL, apiKey, model string) (*http.Request, error)
+    // ParseResponse converts a provider HTTP response to Anthropic format
+    ParseResponse(resp *http.Response) (*anthropic.Response, error)
 
-    // Response transformation: Provider Response → Unified → Anthropic
-    TransformResponseIn(resp *http.Response) (*UnifiedChatResponse, error)
-    TransformResponseOut(unified *UnifiedChatResponse) (*anthropic.Response, error)
-
-    // Streaming
+    // SupportsStreaming returns true if this transformer supports streaming
     SupportsStreaming() bool
-    TransformSSEEvent(event *SSEEvent) ([]SSEEvent, error)
-    TransformStreamChunk(chunk []byte, eventType string) ([]byte, error) // Deprecated
+
+    // TransformStreamEvent converts a provider SSE event to Anthropic SSE events
+    TransformStreamEvent(event *SSEEvent) ([]SSEEvent, error)
+}
+
+// SSEEvent represents a complete server-sent event with type and data.
+type SSEEvent struct {
+    EventType string  // SSE event type (e.g., "message_start", "content_block_delta")
+    Data      []byte  // Raw JSON data payload
 }
 ```
-
-### Converter Utilities
-
-The `converters` package provides reusable conversion functions:
-
-- `AnthropicToUnified()` - Convert Anthropic to unified format
-- `UnifiedToAnthropic()` - Convert unified to Anthropic format
-- `UnifiedToOpenAIRequest()` - Convert unified to OpenAI HTTP request
-- `OpenAIToUnified()` - Convert OpenAI response to unified format
-- `UnifiedRequestToAnthropic()` - Convert unified request to Anthropic
 
 ### Interceptors
 
@@ -317,10 +375,10 @@ Interceptors provide cross-cutting concerns that can be applied to requests and 
 |----------|-------------|---------------|----------------|-----------|
 | Anthropic | `anthropic` | Native | Native | Native events |
 | OpenAI | `openai` | OpenAI-compatible | OpenAI-compatible | Transformed |
-| OpenRouter | `anthropic` | Anthropic-compatible | Anthropic-compatible | Pass-through |
+| OpenRouter | `openrouter` | Anthropic-compatible | Anthropic-compatible | Pass-through |
 | Google Gemini | `gemini` | Gemini native | Gemini native | Transformed |
-| Alibaba Qwen | `anthropic` | Anthropic-compatible | Anthropic-compatible | Pass-through |
-| Zhipu GLM | `anthropic` | Anthropic-compatible | Anthropic-compatible | Pass-through |
+| Alibaba Qwen | `openai` | OpenAI-compatible | OpenAI-compatible | Transformed |
+| Zhipu GLM | `glm-anthropic` | Anthropic-compatible | Anthropic-compatible | Pass-through |
 | MiniMax | `anthropic` | Anthropic-compatible | Anthropic-compatible | Pass-through |
 
 ## Request Flow
@@ -369,8 +427,8 @@ cc-modelrouter/
 ├── bin/                   # Compiled binaries
 ├── cmd/
 │   └── ccrouter/          # Main CLI entry point
-├── docs/                  # Documentation
-├── plans/                 # Implementation plans and design docs
+├── docs/                  # Human documentation (design docs, architecture, security, API docs, user manuals)
+├── plans/                 # AI-generated planning documents (implementation plans, fix plans, refactor plans)
 ├── internal/
 │   ├── cli/               # CLI commands and adapters
 │   ├── config/            # Configuration loading and validation
@@ -381,36 +439,20 @@ cc-modelrouter/
 │   ├── proxy/             # HTTP server and request handling
 │   ├── router/            # Routing engine and failover logic
 │   ├── transformer/       # Request/response transformers
-│   │   ├── converters/     # Format conversion utilities
-│   │   │   ├── anthropic_to_unified.go
-│   │   │   ├── unified_to_anthropic.go
-│   │   │   ├── unified_to_openai.go
-│   │   │   ├── openai_to_unified.go
-│   │   │   ├── unified_to_gemini.go
-│   │   │   └── gemini_to_unified.go
-│   │   ├── providers/      # Provider transformer implementations
+│   │   ├── transformers/  # Provider transformer implementations
 │   │   │   ├── anthropic.go
 │   │   │   ├── openai.go
 │   │   │   ├── openrouter.go
 │   │   │   ├── gemini.go
-│   │   │   ├── qwen.go
-│   │   │   ├── glm.go
-│   │   │   └── minimax.go
-│   │   ├── unified/        # Unified intermediate format types
-│   │   │   ├── message.go
-│   │   │   ├── tool.go
-│   │   │   ├── request.go
-│   │   │   ├── response.go
-│   │   │   └── reasoning.go
-│   │   ├── test/           # Integration tests
-│   │   │   └── integration_test.go
-│   │   ├── base.go          # Base transformer utilities
-│   │   ├── interface.go     # Transformer interface definition
-│   │   └── registry.go      # Transformer registry
-│   └── usage/              # Usage tracking and statistics
+│   │   │   └── glm_anthropic.go
+│   │   ├── test/          # Integration tests
+│   │   ├── base.go        # Base transformer utilities
+│   │   ├── interface.go   # Transformer interface definition
+│   │   └── registry.go    # Transformer registry
+│   └── usage/             # Usage tracking and statistics
 └── pkg/
     └── api/
-        └── anthropic/      # Anthropic API types
+        └── anthropic/     # Anthropic API types
 ```
 
 ## License

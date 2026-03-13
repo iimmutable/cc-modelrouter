@@ -75,6 +75,12 @@ func (s *Server) SetProviderClients(clients map[string]HTTPClient) {
 	s.handler.SetProviderClients(clients)
 }
 
+// SetStreamingClients sets the provider clients for streaming requests.
+// These clients have no timeout and are optimized for SSE streaming.
+func (s *Server) SetStreamingClients(clients map[string]HTTPClient) {
+	s.handler.SetStreamingClients(clients)
+}
+
 // SetConfig sets the configuration.
 func (s *Server) SetConfig(cfg *config.Config) {
 	s.handler.SetConfig(cfg)

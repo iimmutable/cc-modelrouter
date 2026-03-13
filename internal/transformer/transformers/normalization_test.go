@@ -132,9 +132,13 @@ func TestConvertUserThinkingToText_SingleThinkingBlock(t *testing.T) {
 	t.Logf("SUCCESS: User thinking block converted to text block with <thinking> tags")
 }
 
-// TestNormalizeThinkingBlockMessages_UserMessage_Unchanged tests that user messages
-// are NOT modified by normalizeThinkingBlockMessages (they are handled by convertUserThinkingToText).
-func TestNormalizeThinkingBlockMessages_UserMessage_Unchanged(t *testing.T) {
+// TestNormalizeThinkingBlockMessages_UserMessage_Normalized tests that user messages
+// with single non-text blocks ARE now normalized by normalizeThinkingBlockMessages.
+// This was changed to fix OpenRouter validation errors.
+//
+// Previously, user messages were not normalized, causing "expected string, received array"
+// errors when user messages contained single thinking blocks from conversation history.
+func TestNormalizeThinkingBlockMessages_UserMessage_Normalized(t *testing.T) {
 	req := &anthropic.Request{
 		Model:     "claude-sonnet-4.5",
 		MaxTokens: 4096,
@@ -151,18 +155,30 @@ func TestNormalizeThinkingBlockMessages_UserMessage_Unchanged(t *testing.T) {
 	t.Logf("Before normalization:")
 	t.Logf("  messages[0].content length: %d", originalContentLen)
 
-	// Normalize the request (should NOT modify user messages)
+	// Normalize the request (NOW normalizes user messages too)
 	normalizeThinkingBlockMessages(req)
 
 	t.Logf("After normalization:")
 	t.Logf("  messages[0].content length: %d", len(req.Messages[0].Content))
 
-	// User message should remain unchanged by normalizeThinkingBlockMessages
-	if len(req.Messages[0].Content) != originalContentLen {
-		t.Errorf("Expected user message content length to remain %d, got %d", originalContentLen, len(req.Messages[0].Content))
-	} else {
-		t.Logf("SUCCESS: User message unchanged by normalizeThinkingBlockMessages (use convertUserThinkingToText instead)")
+	// User message with single thinking block should NOW be normalized to multi-element array
+	if len(req.Messages[0].Content) == 1 {
+		t.Errorf("Expected user message to be normalized to multi-element array, content length still %d", len(req.Messages[0].Content))
 	}
+
+	// Verify text block was added
+	hasText := false
+	for _, block := range req.Messages[0].Content {
+		if block.Type == "text" {
+			hasText = true
+			break
+		}
+	}
+	if !hasText {
+		t.Errorf("Expected text block to be added to user message")
+	}
+
+	t.Logf("SUCCESS: User message with single thinking block now normalized to multi-element array")
 }
 
 // TestNormalizeAssistantMessages_SingleTextBlock_NoChange tests that messages

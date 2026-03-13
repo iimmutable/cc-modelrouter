@@ -36,6 +36,7 @@ type TransformerRegistry interface {
 // HTTPClient interface for handler dependency.
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
+	DoWithContext(ctx context.Context, req *http.Request) (*http.Response, error)
 }
 
 // UsageTracker interface for tracking usage statistics.
@@ -49,6 +50,7 @@ type Handler struct {
 	router                Router
 	transformerRegistry   TransformerRegistry
 	providerClients       map[string]HTTPClient
+	streamingClients      map[string]HTTPClient
 	config                *config.Config
 	usageTracker          UsageTracker
 	instanceID            string
@@ -60,8 +62,9 @@ type Handler struct {
 // NewHandler creates a new handler.
 func NewHandler(maxRequestSize int64) *Handler {
 	return &Handler{
-		maxRequestSize:  maxRequestSize,
+		maxRequestSize:   maxRequestSize,
 		providerClients: make(map[string]HTTPClient),
+		streamingClients: make(map[string]HTTPClient),
 	}
 }
 
@@ -78,6 +81,12 @@ func (h *Handler) SetTransformerRegistry(reg TransformerRegistry) {
 // SetProviderClients sets the provider clients.
 func (h *Handler) SetProviderClients(clients map[string]HTTPClient) {
 	h.providerClients = clients
+}
+
+// SetStreamingClients sets the provider clients for streaming requests.
+// These clients have no timeout and are optimized for SSE streaming.
+func (h *Handler) SetStreamingClients(clients map[string]HTTPClient) {
+	h.streamingClients = clients
 }
 
 // SetConfig sets the configuration.
@@ -351,8 +360,18 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, req *a
 		return
 	}
 
+	// CRITICAL FIX: Create a fresh context for each provider attempt
+	// This prevents "context canceled" errors from cascading across providers.
+	// We use context.Background() for each attempt to ensure independence.
+	baseCtx := context.Background()
+
 	// Try each target with failover
 	for i, target := range targets {
+		// Create a FRESH context for each provider attempt
+		// This ensures that if one provider fails, it doesn't affect others
+		ctx, cancel := context.WithCancel(baseCtx)
+		defer cancel()
+
 		// FAILOVER LOGGING: Log attempt start with request details
 		logging.StreamDebugf("[FAILOVER] Streaming attempt %d with %s/%s, messages: %d", i, target.Provider, target.Model, len(req.Messages))
 		// Log thinking block count for debugging
@@ -368,10 +387,12 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, req *a
 			}
 		}
 
-		totalTokens, err := h.tryStreamingTarget(r.Context(), w, flusher, req, target)
+		totalTokens, err := h.tryStreamingTarget(ctx, w, flusher, req, target)
 		if err != nil {
 			logging.Streamf("Target %d (%s/%s) failed: %v", i, target.Provider, target.Model, err)
 			logging.StreamDebugf("[FAILOVER] Falling back to next provider")
+			// Note: We don't need to explicitly cancel here because
+			// each iteration creates a fresh context
 			continue
 		}
 
@@ -418,6 +439,17 @@ func (h *Handler) tryTarget(ctx context.Context, req *anthropic.Request, target 
 		return nil, fmt.Errorf("provider not found: %s", target.Provider)
 	}
 
+	// Check if compaction is needed for this provider
+	// Compaction reduces request size to fit within provider limits
+	compactedReq, didCompact, err := CompactRequestIfNeeded(req, h, target.Provider, providerCfg)
+	if err != nil {
+		return nil, fmt.Errorf("compaction failed: %w", err)
+	}
+	if didCompact {
+		logging.Debugf("[COMPACTOR] Request compacted for provider %s, messages reduced from %d to %d",
+			target.Provider, len(req.Messages), len(compactedReq.Messages))
+	}
+
 	// Get transformer
 	transformerName := providerCfg.Transformer
 	if transformerName == "" {
@@ -437,7 +469,8 @@ func (h *Handler) tryTarget(ctx context.Context, req *anthropic.Request, target 
 	// CRITICAL: Create deep copy before passing to transformer
 	// This prevents state corruption during failover when multiple providers
 	// are attempted sequentially with the same request object.
-	reqCopy, err := deepCopyRequest(req)
+	// Use compacted request if compaction occurred, otherwise use original
+	reqCopy, err := deepCopyRequest(compactedReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to copy request: %w", err)
 	}
@@ -449,10 +482,11 @@ func (h *Handler) tryTarget(ctx context.Context, req *anthropic.Request, target 
 	}
 
 	// Log request details for debugging (with nil safety for httpReq and URL)
+	// SECURITY: Sanitize headers to prevent API key leakage in logs
 	if httpReq != nil && httpReq.URL != nil {
-		logging.Debugf("[PROXY REQUEST] URL: %s, Method: %s, Headers: %v", httpReq.URL.String(), httpReq.Method, httpReq.Header)
+		logging.Debugf("[PROXY REQUEST] URL: %s, Method: %s, Headers: %s", httpReq.URL.String(), httpReq.Method, logging.SanitizeHeadersString(httpReq.Header))
 	} else if httpReq != nil {
-		logging.Debugf("[PROXY REQUEST] URL: <nil>, Method: %s, Headers: %v", httpReq.Method, httpReq.Header)
+		logging.Debugf("[PROXY REQUEST] URL: <nil>, Method: %s, Headers: %s", httpReq.Method, logging.SanitizeHeadersString(httpReq.Header))
 	} else {
 		logging.Debugf("[PROXY REQUEST] URL: <nil>, Method: <nil>, Headers: <nil>")
 	}
@@ -480,6 +514,20 @@ func (h *Handler) tryTarget(ctx context.Context, req *anthropic.Request, target 
 		} else {
 			logging.Debugf("[PROXY ERROR] Response: %s", bodyStr)
 		}
+
+		// Check for specific error code 1213 with enhanced logging
+		if isErrorCode1213(bodyStr) {
+			// Log additional diagnostic info for 1213 errors
+			// SECURITY: Sanitize headers to prevent API key leakage in logs
+			contentLength := int64(0)
+			if httpReq != nil {
+				contentLength = httpReq.ContentLength
+			}
+			logging.Errorf("[PROXY ERROR 1213] DETAILED - URL: %s, ContentLength: %d, Request Headers: %s, Response: %s",
+				urlStr, contentLength, logging.SanitizeHeadersString(httpReq.Header), bodyStr)
+			// Return a specific error that can be handled differently
+			return nil, fmt.Errorf("API error 1213 (prompt not received): %s - %s", resp.Status, bodyStr)
+		}
 		return nil, fmt.Errorf("API error: %s - %s", resp.Status, bodyStr)
 	}
 
@@ -498,6 +546,17 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 		return 0, fmt.Errorf("provider not found: %s", target.Provider)
 	}
 
+	// Check if compaction is needed for this provider
+	// Compaction reduces request size to fit within provider limits
+	compactedReq, didCompact, err := CompactRequestIfNeeded(req, h, target.Provider, providerCfg)
+	if err != nil {
+		return 0, fmt.Errorf("compaction failed: %w", err)
+	}
+	if didCompact {
+		logging.Streamf("[COMPACTOR] Request compacted for provider %s, messages reduced from %d to %d",
+			target.Provider, len(req.Messages), len(compactedReq.Messages))
+	}
+
 	// Get transformer
 	transformerName := providerCfg.Transformer
 	if transformerName == "" {
@@ -513,16 +572,23 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 		return 0, fmt.Errorf("transformer does not support streaming")
 	}
 
-	// Get client
-	client, ok := h.providerClients[target.Provider]
+	// Get streaming client (falls back to regular client if streaming client not available)
+	// Streaming clients have no timeout to allow long-running SSE streams
+	client, ok := h.streamingClients[target.Provider]
 	if !ok {
-		return 0, fmt.Errorf("client not found: %s", target.Provider)
+		// Fall back to regular client if streaming client not available
+		client, ok = h.providerClients[target.Provider]
+		if !ok {
+			return 0, fmt.Errorf("client not found: %s", target.Provider)
+		}
+		logging.Streamf("[STREAM] Using regular client for %s (no streaming client available)", target.Provider)
 	}
 
 	// CRITICAL: Create deep copy before passing to transformer
 	// This prevents state corruption during failover when multiple providers
 	// are attempted sequentially with the same request object.
-	reqCopy, err := deepCopyRequest(req)
+	// Use compacted request if compaction occurred, otherwise use original
+	reqCopy, err := deepCopyRequest(compactedReq)
 	if err != nil {
 		return 0, fmt.Errorf("failed to copy request: %w", err)
 	}
@@ -543,8 +609,8 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 		logging.StreamDebugf("[PROXY STREAM REQUEST] URL: <nil>, Method: <nil>")
 	}
 
-	// Send request
-	resp, err := client.Do(httpReq)
+	// Send request with context for proper cancellation and timeout propagation
+	resp, err := client.DoWithContext(ctx, httpReq)
 	if err != nil {
 		return 0, err
 	}
@@ -982,4 +1048,10 @@ func generateID() string {
 		b[i] = charset[rand.Intn(len(charset))]
 	}
 	return string(b)
+}
+
+// isErrorCode1213 checks if the response body contains error code 1213
+// which indicates "prompt parameter not properly received" from BigModel/GLM providers.
+func isErrorCode1213(bodyStr string) bool {
+	return strings.Contains(bodyStr, "\"code\":\"1213\"") || strings.Contains(bodyStr, `"code":1213`) || strings.Contains(bodyStr, "未正常接收到prompt参数")
 }

@@ -1,0 +1,50 @@
+#!/bin/bash
+
+# Check for misplaced test files
+# Allows: */test/*.go (module test folders)
+# Allows: test/*.go (root test folder)
+# Allows: *_test.go alongside source (white-box tests)
+# Rejects: test files not following these patterns
+
+MISPLACED=0
+
+# Get all staged test files (excluding deleted)
+STAGED_TESTS=$(git diff --cached --name-only --diff-filter=ACM | grep '_test\.go$' || true)
+
+for FILE in $STAGED_TESTS; do
+    DIR=$(dirname "$FILE")
+    BASENAME=$(basename "$FILE")
+
+    # Allowed locations:
+    # 1. In a test/ subfolder (e.g., internal/proxy/test/)
+    # 2. In root test/ folder
+    # 3. Alongside source files (white-box tests) - but warn
+
+    if [[ "$DIR" == "test" || "$DIR" == */test || "$DIR" == test/* ]]; then
+        # In a test folder - allowed
+        continue
+    fi
+
+    # Check if this is alongside source (white-box test)
+    SOURCE_FILE="${FILE%_test.go}.go"
+    if git ls-files --error-unmatch "$SOURCE_FILE" >/dev/null 2>&1; then
+        # White-box test alongside source - warn but allow
+        echo "ℹ️  White-box test (allowed): $FILE"
+        continue
+    fi
+
+    # Misplaced test file
+    echo "❌ Test file misplaced: $FILE"
+    PARENT_DIR=$(dirname "$FILE")
+    echo "   Module tests should be in: ${PARENT_DIR}/test/"
+    MISPLACED=1
+done
+
+if [ $MISPLACED -eq 1 ]; then
+    echo ""
+    echo "Commit rejected. Move test files to appropriate test/ folders."
+    echo "If you need to test private members, keep the test alongside the source."
+    exit 1
+fi
+
+exit 0

@@ -183,9 +183,9 @@ Error: transformer not found: xyz
 **Solution:**
 Transformers are registered based on provider names. Valid transformer names:
 - `anthropic` (default)
+- `openai`
 - `openrouter`
 - `gemini`
-- `qwen`
 - `glm`
 
 Use a supported transformer name or omit the `transformer` field to use the default (provider name).
@@ -260,90 +260,72 @@ This was caused by a race condition in server startup where the `Start()` method
 
 4. **See the detailed fix documentation:** [connection-refused-fix.md](connection-refused-fix.md)
 
-## Thinking Block Validation Errors (CRITICAL)
+## Thinking Block and Content Validation Errors (CRITICAL)
 
-### Issue: "Invalid input: expected string, received array" during OpenRouter failover
+### Issue: "Invalid input: expected string, received array" from OpenRouter
 
-**Status:** **Fixed in commit fa1d7ad** (comprehensive fix for thinking block signature validation errors)
+**Status:** **Fixed** (commits fa1d7ad through Mar 11 fixes)
 
-**Symptoms:**
-- 400 Bad Request errors from OpenRouter when using Anthropic models with thinking blocks
-- Error occurs during **failover** when switching from GLM to OpenRouter Anthropic models
-- Error messages like:
-  - `"Invalid input: expected string, received array"` at path `["messages", N, "content"]`
-  - Multiple messages fail (messages 1, 3, 5, 7, etc.) - all assistant messages with thinking blocks
-  - `"invalid_union"` errors from provider validation
+This error went through three rounds of fixes as different edge cases surfaced.
 
-**Root Cause:**
+#### Round 1 — Single thinking blocks during failover (commit fa1d7ad)
 
-When GLM (or other providers) return assistant messages containing thinking blocks, and then those messages are sent to OpenRouter with an Anthropic model during failover, OpenRouter rejects the request because:
+**Trigger:** GLM returns `[{thinking}]` in assistant messages. On failover to OpenRouter, the single-element array is rejected.
 
-1. **GLM returns thinking blocks** in assistant messages as:
-   ```json
-   "content": [{"type": "thinking", "thinking": "..."}]
-   ```
+**Fix:** OpenRouter transformer now always normalizes thinking blocks, adding a text block with `" "` to produce `[{thinking}, {text: " "}]`.
 
-2. **These messages persist** in the conversation history
+#### Round 2 — Multiple thinking blocks (Mar 11 fix)
 
-3. **OpenRouter Anthropic models** have strict validation that:
-   - Rejects single-element content arrays for thinking blocks
-   - Requires multi-element arrays or string format
-   - Expects proper signature handling
+**Trigger:** After multiple GLM responses, conversation history contains `[{thinking}, {thinking}, {thinking}]`. The normalization only handled exactly-one-thinking-block at index 0.
 
-4. **The previous code** skipped normalization for Anthropic models via OpenRouter, incorrectly assuming they would accept single thinking blocks like direct Anthropic API does.
+**Fix:** Expanded normalization to detect content with ONLY thinking blocks (regardless of count or position), then add a text block.
 
-**The Error Pattern:**
-```
-"expected string, received array" at messages[1, 3, 5, 7...].content
-```
+#### Round 3 — Non-thinking single-element content (Mar 11 fix)
 
-These are all **assistant messages** (odd-numbered in zero-indexed array with user message at 0) that contain thinking blocks returned by GLM.
+**Trigger:** Single image blocks, tool_result blocks, or mixed non-text content also produce single-element arrays that fail OpenRouter validation.
 
-**Diagnosis:**
-Check the error messages in logs:
-```bash
-grep "expected string, received array" ~/.cc-modelrouter/logs/*.log
-```
+**Fix:** Generic `normalizeSingleElementContent()` replaces thinking-specific logic. Any single-element content without a text block gets a text block appended.
 
-Look for validation errors at paths like:
-- `["messages", 1, "content"]` - First assistant message
-- `["messages", 3, "content"]` - Second assistant message
-- Pattern continues for all assistant messages with thinking blocks
-
-**Solution Implemented:**
-
-The fix in `internal/transformer/transformers/openrouter.go`:
-
-1. **Always normalize thinking blocks** for OpenRouter, regardless of target model type
-2. This adds a text block with single space to assistant messages with only thinking blocks
-3. The resulting multi-element array `[{thinking}, {text: " "}]` passes OpenRouter's validation
+Additionally, `validateAndRepairBlocks()` handles corrupted blocks:
 
 ```go
-// CRITICAL FIX: Always normalize thinking blocks for OpenRouter
-// Both Anthropic and non-Anthropic models via OpenRouter require multi-element arrays
-// to prevent "expected string, received array" validation errors
-normalizeThinkingBlockMessages(&reqCopy)
+func validateAndRepairBlocks(req *anthropic.Request) {
+    for i := range req.Messages {
+        for j := range req.Messages[i].Content {
+            block := &req.Messages[i].Content[j]
+
+            // Validate image blocks — handle both nil Source and empty Data
+            if block.Type == "image" {
+                if block.Source == nil || block.Source.Data == "" {
+                    block.Type = "text"
+                    block.Text = "[Image: data unavailable]"
+                    block.Source = nil
+                }
+            }
+
+            // Validate thinking blocks
+            if block.Type == "thinking" && block.Thinking == "" {
+                block.Type = "text"
+                block.Text = "[Thinking: content unavailable]"
+            }
+        }
+    }
+}
 ```
 
-**Why This Works:**
+**Diagnosis:**
+```bash
+grep "expected string, received array" ~/.cc-modelrouter/logs/*.log
+grep "invalid_union" ~/.cc-modelrouter/logs/*.log
+```
 
-1. **Normalization adds a text block**: `normalizeThinkingBlockMessages` adds a text block with `" "` to assistant messages that have only a thinking block
-2. **Multi-element array format**: The resulting content is `[{thinking}, {text: " "}]` which is a multi-element array
-3. **OpenRouter accepts multi-element arrays**: The validation error occurs with single-element arrays, not multi-element ones
-4. **Signature handling remains correct**: The signature field is set to `""` for Anthropic models as required
-
-**Prevention:**
-
-The fix is applied at the transformer level, so all requests to OpenRouter (both direct and failover) will have properly normalized thinking blocks.
-
-**Related Issues:**
-- State corruption across failover attempts - Fixed with deep copying
-- Signature field validation - Fixed with `*string` pointer type
-- User message thinking blocks - Fixed with `convertUserThinkingToText`
+**Related fixes also applied:**
+- State corruption across failover — deep copying in each transformer's `PrepareRequest()`
+- Signature field validation — `*string` pointer type distinguishes omit vs empty
+- User message thinking blocks — converted to text via `convertUserThinkingToText`
 
 **See Also:**
 - [Transformer documentation](transformers.md#thinking-block-handling-critical)
-- Commit fa1d7ad: "fix(transformer): comprehensive fix for thinking block signature validation errors"
 
 ---
 
@@ -376,187 +358,6 @@ if err := json.Unmarshal(reqJSON, &reqCopy); err != nil {
 ```
 
 This ensures each provider receives an independent copy of the original request.
-
----
-
-## Recurring Thinking Block Validation Errors (March 2026)
-
-### Issue: "Invalid input: expected string, received array" - INCOMPLETE NORMALIZATION
-
-**Status:** **FIXED in commit (March 2026)** - Expanded normalization to handle multiple thinking blocks
-
-**Symptoms:**
-- 400 Bad Request errors from OpenRouter when using Anthropic models
-- Error occurs intermittently after multiple GLM responses accumulate in conversation history
-- Error pattern:
-  ```
-  "code": "invalid_union",
-  "path": ["messages", 1, "content"],
-  "message": "Invalid input"
-  ```
-
-**Root Cause (March 2026):**
-
-The `normalizeThinkingBlockMessages()` function in `anthropic.go` originally only added a text block when there was **exactly one thinking block** at index 0:
-
-```go
-// OLD (BUGGY) LOGIC
-if len(content) == 1 && content[0].Type == "thinking" {
-    // Add text block
-}
-```
-
-This failed for:
-1. **Multiple thinking blocks**: `[{thinking}, {thinking}, {thinking}]` - len > 1, condition fails
-2. **Thinking after text**: `[{text}, {thinking}]` - content[0].Type != "thinking", condition fails
-
-**Fix Applied (March 2026):**
-
-Expanded normalization to check if content has ONLY thinking blocks (regardless of count or position), then add text block:
-
-```go
-// Check if content has ONLY thinking blocks (no text blocks)
-hasOnlyThinkingBlocks := len(content) > 0
-hasTextBlock := false
-
-for _, block := range content {
-    if block.Type == "text" {
-        hasTextBlock = true
-        break
-    }
-    if block.Type != "thinking" {
-        hasOnlyThinkingBlocks = false
-        break
-    }
-}
-
-if hasOnlyThinkingBlocks && !hasTextBlock {
-    // Add text block
-}
-```
-
-**Files Changed:**
-- `internal/transformer/transformers/anthropic.go` - Fixed normalization logic
-- `internal/transformer/transformers/normalization_test.go` - Added test cases
-
----
-
-## Single Content Block Validation Errors (March 2026 - UPDATED)
-
-### Issue: "Invalid input: expected string, received array" - INCOMPLETE NORMALIZATION
-
-**Status:** **Requires additional fix** - Current normalization only handles thinking-only content
-
-**Symptoms:**
-- 400 Bad Request errors from OpenRouter when using Anthropic models
-- Error occurs intermittently after conversation history accumulates diverse content types
-- Error pattern:
-  ```
-  "code": "invalid_union",
-  "errors": [
-    {"expected": "string", "code": "invalid_type", "path": [], "message": "Invalid input: expected string, received array"},
-    {"expected": "string", "code": "invalid_type", "path": [3, "data"], "message": "Invalid input: expected string, received undefined"}
-  ],
-  "path": ["messages", 1, "content"]
-  ```
-
-**Root Cause Analysis (March 2026):**
-
-The `normalizeThinkingBlockMessages()` function **only normalizes content with ONLY thinking blocks**. It does NOT handle:
-
-1. **Single image blocks** → remains single-element array → fails validation
-2. **Single tool_result blocks** → remains single-element array → fails validation
-3. **Mixed non-text content** (e.g., thinking + image) → not normalized → fails validation
-
-**Why the Error Path [3]["data"]:**
-
-The path `[3]["data"]` indicates there's a content block at index 3 with a missing `data` field:
-- Likely an image block with corrupted/missing `source.data`
-- Or a transformed response that lost required fields during conversion
-
-**MessageContent Marshaling Behavior:**
-
-In `pkg/api/anthropic/types.go`, the `MarshalJSON()` method:
-```go
-// If single text block, marshal as string
-if len(merged) == 1 && merged[0].Type == "text" {
-    return json.Marshal(merged[0].Text)
-}
-// Otherwise marshal as array
-return json.Marshal(merged)
-```
-
-**Only single text blocks become strings**. All other single-element content (thinking, image, tool_result) become arrays and fail OpenRouter validation.
-
-**Fix Required:**
-
-Replace thinking-specific normalization with generic single-element content handling:
-
-```go
-// normalizeSingleElementContent ensures ANY single-element content array
-// (not just thinking) is normalized to prevent provider validation errors.
-func normalizeSingleElementContent(req *anthropic.Request) {
-    for i := range req.Messages {
-        if req.Messages[i].Role != anthropic.RoleAssistant {
-            continue
-        }
-
-        content := req.Messages[i].Content
-        if len(content) == 0 {
-            continue
-        }
-
-        // Check if content has a text block
-        hasTextBlock := false
-        for _, block := range content {
-            if block.Type == "text" {
-                hasTextBlock = true
-                break
-            }
-        }
-
-        // If single-element array WITHOUT text block, add text block
-        if len(content) == 1 && !hasTextBlock {
-            req.Messages[i].Content = append(content, anthropic.ContentBlock{
-                Type: "text",
-                Text: " ",
-            })
-        }
-    }
-}
-```
-
-**Additionally, add block validation to repair corrupted blocks:**
-
-```go
-// validateAndRepairBlocks checks for blocks with missing required fields
-func validateAndRepairBlocks(req *anthropic.Request) {
-    for i := range req.Messages {
-        for j := range req.Messages[i].Content {
-            block := &req.Messages[i].Content[j]
-
-            // Validate image blocks
-            if block.Type == "image" && block.Source != nil {
-                if block.Source.Data == "" {
-                    block.Type = "text"
-                    block.Text = "[Image: data unavailable]"
-                    block.Source = nil
-                }
-            }
-
-            // Validate thinking blocks
-            if block.Type == "thinking" && block.Thinking == "" {
-                block.Type = "text"
-                block.Text = "[Thinking: content unavailable]"
-            }
-        }
-    }
-}
-```
-
-**Files to Modify:**
-- `internal/transformer/transformers/anthropic.go` - Replace normalization function
-- `internal/transformer/transformers/openrouter.go` - Update call sites
 
 ---
 

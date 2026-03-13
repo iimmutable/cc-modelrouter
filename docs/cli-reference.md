@@ -25,7 +25,9 @@ ccrouter code [flags]
 
 **Flags:**
 ```
-  -c, --config string   Path to config file
+  -c, --config string          Path to config file
+      --log-destination string Log destination (file|stdout|stderr|path)
+      --log-level string       Log level: debug, info, warn, error
 ```
 
 **Description:**
@@ -41,6 +43,9 @@ ccrouter code
 
 # Use specific config file
 ccrouter code -c /path/to/config.json
+
+# Enable debug logging to file
+ccrouter code --log-level=debug --log-destination=file
 ```
 
 ---
@@ -55,8 +60,11 @@ ccrouter start [flags]
 
 **Flags:**
 ```
-  -c, --config string   Path to config file
-  -p, --port int        Port to listen on (default from config)
+  -c, --config string          Path to config file
+  -p, --port int               Port to listen on (overrides config)
+  -H, --host string            Host to bind to (overrides config)
+      --log-destination string Log destination (file|stdout|stderr|path)
+      --log-level string       Log level: debug, info, warn, error
 ```
 
 **Description:**
@@ -74,6 +82,9 @@ ccrouter start -p 9090
 
 # Use specific config
 ccrouter start -c /path/to/config.json
+
+# Start with debug logging to stdout
+ccrouter start --log-level=debug --log-destination=stdout
 ```
 
 ---
@@ -88,18 +99,18 @@ ccrouter stop [instance-id] [flags]
 
 **Arguments:**
 ```
-  instance-id   ID of instance to stop (optional)
+  instance-id   ID of instance to stop (optional — stops all if omitted)
 ```
 
 **Flags:**
 ```
-  --all   Stop all running instances
+  -f, --force   Force stop using SIGKILL instead of SIGTERM
 ```
 
 **Description:**
 - Stops the specified instance by PID
 - Removes instance metadata file
-- If no ID provided and `--all` not set, shows error
+- If no ID provided, stops all running instances
 
 **Examples:**
 ```bash
@@ -107,7 +118,10 @@ ccrouter stop [instance-id] [flags]
 ccrouter stop inst_20250216_143022
 
 # Stop all instances
-ccrouter stop --all
+ccrouter stop
+
+# Force kill a stuck instance
+ccrouter stop -f inst_20250216_143022
 ```
 
 ---
@@ -117,22 +131,32 @@ ccrouter stop --all
 Restart a router instance.
 
 ```bash
-ccrouter restart [instance-id]
+ccrouter restart [instance-id] [flags]
 ```
 
 **Arguments:**
 ```
-  instance-id   ID of instance to restart (required)
+  instance-id   ID of instance to restart (optional — restarts all if omitted)
+```
+
+**Flags:**
+```
+  -c, --config string   Path to config file for restart
 ```
 
 **Description:**
 - Stops the instance
 - Starts a new instance with the same configuration
 - Reloads config from disk
+- If no ID provided, restarts all running instances
 
 **Examples:**
 ```bash
+# Restart specific instance
 ccrouter restart inst_20250216_143022
+
+# Restart all instances
+ccrouter restart
 ```
 
 ---
@@ -142,7 +166,12 @@ ccrouter restart inst_20250216_143022
 Show all running instances.
 
 ```bash
-ccrouter status
+ccrouter status [flags]
+```
+
+**Flags:**
+```
+  -a, --all   Show all instances including dead ones
 ```
 
 **Output:**
@@ -159,26 +188,73 @@ inst_20250216_150033    8082    12346   global         2025-02-16 15:00:33
 Remove stale instance files.
 
 ```bash
-ccrouter clean
+ccrouter clean [flags]
+```
+
+**Flags:**
+```
+  -a, --all   Remove all instance files including running ones
 ```
 
 **Description:**
 - Removes metadata files for instances that are no longer running
 - Useful for cleanup after crashes or manual process termination
+- Use `--all` with caution — stops and removes all instances
 
 ---
 
 ### ccrouter config
 
-Show active configuration.
+Configuration management commands.
 
 ```bash
-ccrouter config
+ccrouter config [subcommand]
+```
+
+**Subcommands:**
+
+#### ccrouter config show
+
+Display the active configuration (API keys are masked).
+
+```bash
+ccrouter config show [-c /path/to/config.json]
 ```
 
 **Description:**
 - Displays the currently active configuration as JSON
 - Shows whether using global or project-level config
+- API keys are masked for security
+
+#### ccrouter config path
+
+Show the configuration file search paths.
+
+```bash
+ccrouter config path
+```
+
+#### ccrouter config init
+
+Create a sample configuration file.
+
+```bash
+ccrouter config init [flags]
+```
+
+**Flags:**
+```
+  --global   Create in global location (~/.cc-modelrouter/config.json)
+```
+
+**Examples:**
+```bash
+# Create project-level config
+ccrouter config init
+
+# Create global config
+ccrouter config init --global
+```
 
 ---
 
@@ -187,12 +263,18 @@ ccrouter config
 Show logs for an instance.
 
 ```bash
-ccrouter logs [instance-id]
+ccrouter logs [instance-id] [flags]
 ```
 
 **Arguments:**
 ```
   instance-id   ID of instance (optional, shows all if not provided)
+```
+
+**Flags:**
+```
+  -f, --follow   Follow log output (like tail -f)
+  -n, --tail int Number of lines to show from the end (default: 100)
 ```
 
 **Examples:**
@@ -202,7 +284,49 @@ ccrouter logs
 
 # Show logs for specific instance
 ccrouter logs inst_20250216_143022
+
+# Follow logs in real-time
+ccrouter logs -f inst_20250216_143022
+
+# Show last 50 lines
+ccrouter logs -n 50 inst_20250216_143022
 ```
+
+---
+
+### ccrouter usage
+
+Show usage statistics for models.
+
+```bash
+ccrouter usage [instance-id] [period]
+```
+
+**Arguments:**
+```
+  instance-id   ID of instance (optional, shows all instances if not provided)
+  period        Time period: all-time, today, this-week, last-week, this-month, last-month,
+                this-quarter, last-year, or custom range YYYYMMDD-YYYYMMDD
+```
+
+**Examples:**
+```bash
+# Show all-time usage across all instances
+ccrouter usage
+
+# Show usage for specific instance
+ccrouter usage inst_20250315_143022
+
+# Show usage for specific period
+ccrouter usage today
+ccrouter usage this-week
+ccrouter usage 20250301-20250315
+```
+
+**Description:**
+- Displays token usage statistics per model, route, and instance
+- Data is stored in SQLite at `~/.cc-modelrouter/usage.db`
+- Uses buffered writes (500 records or 3 seconds) for performance
 
 ---
 
