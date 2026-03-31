@@ -1,4 +1,4 @@
-package transformers_test
+package transformers
 
 import (
 	"encoding/json"
@@ -7,14 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/iimmutable/cc-modelrouter/internal/transformer/transformers"
 	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
-
-// testStrPtr is a helper function for creating string pointers in tests.
-func testStrPtr(s string) *string {
-	return &s
-}
 
 // TestRepro_BigModel1213_BodyCorruption reproduces the BigModel 1213 error
 // by simulating multiple requests where the body becomes corrupted between calls.
@@ -65,7 +59,7 @@ func TestRepro_BigModel1213_BodyCorruption(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	transformer := transformers.NewGLMAnthropicTransformer()
+	transformer := NewGLMAnthropicTransformer()
 
 	// Simulate multiple requests (like failover or retry)
 	for i := 1; i <= 5; i++ {
@@ -177,7 +171,7 @@ func TestRepro_Aliyun_BodyConsumedOnRetry(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	transformer := transformers.NewGLMAnthropicTransformer()
+	transformer := NewGLMAnthropicTransformer()
 
 	req := &anthropic.Request{
 		Model:     "glm-4.7",
@@ -287,7 +281,7 @@ func TestRepro_OpenRouter_EmptyTextBlock(t *testing.T) {
 		},
 	}
 
-	transformer := transformers.NewOpenRouterTransformer()
+	transformer := NewOpenRouterTransformer()
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -385,7 +379,7 @@ func TestRepro_FullFlow_MultipleRequests(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	transformer := transformers.NewGLMAnthropicTransformer()
+	transformer := NewGLMAnthropicTransformer()
 
 	// First request - simple
 	req1 := &anthropic.Request{

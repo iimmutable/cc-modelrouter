@@ -1,4 +1,4 @@
-package transformers_test
+package transformers
 
 import (
 	"encoding/json"
@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/iimmutable/cc-modelrouter/internal/transformer"
-	"github.com/iimmutable/cc-modelrouter/internal/transformer/transformers"
 	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
@@ -31,7 +30,7 @@ func newMockHTTPResponse(statusCode int, body string) *mockHTTPResponse {
 
 // TestGeminiImageInRequest tests that Gemini transformer properly handles images in requests.
 func TestGeminiImageInRequest(t *testing.T) {
-	geminiTransformer := transformers.NewGeminiTransformer()
+	geminiTransformer := NewGeminiTransformer()
 
 	req := &anthropic.Request{
 		Model:     "gemini-2.0-flash-exp",
@@ -72,7 +71,7 @@ func TestGeminiImageInRequest(t *testing.T) {
 
 // TestGeminiImageInResponse tests that Gemini transformer properly converts images in responses.
 func TestGeminiImageInResponse(t *testing.T) {
-	geminiTransformer := transformers.NewGeminiTransformer()
+	geminiTransformer := NewGeminiTransformer()
 
 	// Mock Gemini response with inline data (image)
 	geminiRespJSON := `{
@@ -137,7 +136,7 @@ func TestGeminiImageInResponse(t *testing.T) {
 
 // TestOpenAIImageSupport tests that OpenAI transformer can handle image content (GPT-4 Vision).
 func TestOpenAIImageSupport(t *testing.T) {
-	openaiTransformer := transformers.NewOpenAITransformer()
+	openaiTransformer := NewOpenAITransformer()
 
 	req := &anthropic.Request{
 		Model:     "gpt-4-vision-preview",
@@ -187,7 +186,7 @@ func TestOpenAIImageSupport(t *testing.T) {
 
 // TestImageStreamingSSEEvent tests that image content is properly handled in SSE streaming.
 func TestImageStreamingSSEEvent(t *testing.T) {
-	geminiTransformer := transformers.NewGeminiTransformer()
+	geminiTransformer := NewGeminiTransformer()
 
 	// Create an SSE event representing text content
 	textEvent := transformer.SSEEvent{
@@ -209,7 +208,7 @@ func TestImageStreamingSSEEvent(t *testing.T) {
 
 // TestMultipleImagesInStreaming tests handling multiple images in streaming responses.
 func TestMultipleImagesInStreaming(t *testing.T) {
-	geminiTransformer := transformers.NewGeminiTransformer()
+	geminiTransformer := NewGeminiTransformer()
 
 	// Simulate a Gemini response with multiple inline data parts
 	geminiRespJSON := `{
@@ -269,7 +268,7 @@ func TestMultipleImagesInStreaming(t *testing.T) {
 
 // TestImageWithTextInStreaming tests mixed image and text content in streaming.
 func TestImageWithTextInStreaming(t *testing.T) {
-	geminiTransformer := transformers.NewGeminiTransformer()
+	geminiTransformer := NewGeminiTransformer()
 
 	// Simulate alternating text and image content
 	geminiRespJSON := `{
@@ -330,7 +329,7 @@ func TestImageWithTextInStreaming(t *testing.T) {
 
 // TestImageEdgeCases tests edge cases for image handling.
 func TestImageEdgeCases(t *testing.T) {
-	geminiTransformer := transformers.NewGeminiTransformer()
+	geminiTransformer := NewGeminiTransformer()
 
 	tests := []struct {
 		name        string

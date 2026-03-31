@@ -1,4 +1,4 @@
-package transformers_test
+package transformers
 
 import (
 	"encoding/json"
@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/iimmutable/cc-modelrouter/internal/logging"
-	"github.com/iimmutable/cc-modelrouter/internal/transformer/transformers"
 	"github.com/iimmutable/cc-modelrouter/pkg/api/anthropic"
 )
 
@@ -83,7 +82,7 @@ func TestBigModelRequestFormat(t *testing.T) {
 	defer mockServer.Close()
 
 	// Create the GLM transformer
-	transformer := transformers.NewGLMAnthropicTransformer()
+	transformer := NewGLMAnthropicTransformer()
 
 	// Create a test request
 	req := &anthropic.Request{
@@ -162,7 +161,7 @@ func TestBigModelMultipleRequests(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	transformer := transformers.NewGLMAnthropicTransformer()
+	transformer := NewGLMAnthropicTransformer()
 
 	// Make 3 sequential requests
 	for i := 1; i <= 3; i++ {
@@ -198,7 +197,7 @@ func TestBigModelMultipleRequests(t *testing.T) {
 
 // TestRequestBodyIntegrity verifies that the request body is correctly formed
 func TestRequestBodyIntegrity(t *testing.T) {
-	transformer := transformers.NewGLMAnthropicTransformer()
+	transformer := NewGLMAnthropicTransformer()
 
 	// Test with various message types
 	testCases := []struct {
@@ -250,7 +249,7 @@ func TestRequestBodyIntegrity(t *testing.T) {
 
 // TestStreamingRequestBody verifies streaming requests have correct body
 func TestStreamingRequestBody(t *testing.T) {
-	transformer := transformers.NewGLMAnthropicTransformer()
+	transformer := NewGLMAnthropicTransformer()
 
 	// Create a request with streaming enabled
 	req := &anthropic.Request{
@@ -320,7 +319,7 @@ func TestStreamingRequestBody(t *testing.T) {
 
 // TestContentTypeHeader verifies the correct headers are set
 func TestContentTypeHeader(t *testing.T) {
-	transformer := transformers.NewGLMAnthropicTransformer()
+	transformer := NewGLMAnthropicTransformer()
 
 	req := &anthropic.Request{
 		Model:     "glm-4.7",
@@ -355,7 +354,7 @@ func TestContentTypeHeader(t *testing.T) {
 
 // BenchmarkRequestPreparation benchmarks the request preparation
 func BenchmarkRequestPreparation(b *testing.B) {
-	transformer := transformers.NewGLMAnthropicTransformer()
+	transformer := NewGLMAnthropicTransformer()
 
 	req := &anthropic.Request{
 		Model:     "glm-4.7",
