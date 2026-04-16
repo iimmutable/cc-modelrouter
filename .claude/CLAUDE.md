@@ -50,7 +50,8 @@ Provider API → Transformer → HTTP Proxy → Claude Code
 - `internal/provider/` — HTTP client for provider APIs
 - `internal/usage/` — SQLite usage tracking with buffered writes (500 records or 3s)
 - `internal/config/` — Config loading with `${VAR_NAME}` env var interpolation
-- `internal/cli/` — Cobra CLI commands (start, code, stop, status, config, logs, usage, clean, restart)
+- `internal/cli/` — Cobra CLI commands (start, code, stop, status, config, logs, usage, clean, restart, monitor)
+- `internal/monitor/` — Live usage monitor terminal UI (view, poller, buffer, tailer)
 - `internal/interceptor/` — Request/response interceptors (max tokens, reasoning, tool enhancement)
 - `internal/daemon/` — Instance management (PID files, metadata)
 

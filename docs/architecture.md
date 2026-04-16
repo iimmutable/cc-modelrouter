@@ -46,6 +46,8 @@ Handles command-line interface using Cobra framework.
 - `clean` - Remove stale instance files
 - `config` - Show active configuration
 - `logs` - Show instance logs
+- `usage` - Show token usage statistics
+- `monitor` - Live usage monitor with terminal UI
 
 ### Configuration Layer (`internal/config/`)
 
@@ -138,7 +140,7 @@ type Transformer interface {
 | `openai` | OpenAI-compatible | `Authorization: Bearer` |
 | `openrouter` | Anthropic native (with signature/thinking normalization) | `x-api-key` header |
 | `gemini` | Gemini native (`contents`/`parts`) | Query param `key=` |
-| `glm-anthropic` | Anthropic-compatible | `x-api-key` header |
+| `glm_anthropic` | Anthropic-compatible | `x-api-key` header |
 
 ### Provider Client Layer (`internal/provider/`)
 

@@ -1,0 +1,336 @@
+package configwizard
+
+import (
+	"os"
+	"strings"
+
+	"github.com/iimmutable/cc-modelrouter/internal/config"
+)
+
+// Screen represents the current screen in the wizard.
+type Screen int
+
+const (
+	ScreenMainMenu Screen = iota
+	ScreenProviders
+	ScreenAddProvider1
+	ScreenAddProvider2
+	ScreenRoutes
+	ScreenEditRoute
+	ScreenServer
+	ScreenLogging
+	ScreenViewConfig
+	ScreenTestConnection
+)
+
+// WizardState holds all state for the configuration wizard.
+type WizardState struct {
+	// Navigation
+	CurrentScreen  Screen
+	PreviousScreen Screen
+
+	// Config being edited
+	Config      *config.Config
+	ConfigPath  string
+	HasChanges  bool
+	OriginalCfg *config.Config // For detecting changes
+
+	// Main menu state
+	MainMenuCursor int // saved main menu cursor when entering sub-screens
+
+	// Provider list screen state
+	ProviderCursor int
+
+	// Add/Edit provider state (Step 1)
+	NewProviderName      string
+	NewProviderBaseURL   string
+	NewProviderTransformer string
+	NewProviderModels    string
+	ProviderPreset       string // "anthropic", "openrouter", "bigmodel", "gemini", "custom"
+	EditingProvider      bool   // true when editing an existing provider
+
+	// Add provider state (Step 2)
+	NewProviderAPIKey      string
+	AddToShellConfig       bool
+	SourceImmediately      bool
+
+	// Routes screen state
+	RouteCursor int
+
+	// Edit route state
+	EditRouteName       string
+	EditRouteChain      []config.RouteTarget
+	EditRouteChainCursor int // selected chain item index
+	SelectedProvider    string
+	SelectedModel       string
+
+	// Server screen state
+	ServerHost    string
+	ServerPort    string
+	PortStatus    string // non-empty = port availability status (warning or success)
+	PortTesting   bool   // true while port availability test is running
+
+	// Logging screen state
+	LoggingEnabled    bool
+	LoggingLevel      string
+	LoggingDestination string
+	LoggingFilePath   string
+
+	// Logging dropdown state
+	ShowLogLevelDropdown bool
+	LogLevelDropdownCursor int
+	ShowLogDestDropdown   bool
+	LogDestDropdownCursor int
+
+	// Test connection state
+	TestProvider   string
+	TestModel      string
+	TestStatus    string // "testing", "success", "error"
+	TestError      string
+	TestLatency   float64
+
+	// Modal/Confirmation
+	ShowConfirm    bool
+	ConfirmMessage string
+	ConfirmAction  func() bool
+	ConfirmCursor  int // 0 = Yes focused, 1 = No focused
+
+	// Resolved API keys (real values, not ${CCROUTER_...} placeholders)
+	ResolvedAPIKeys      map[string]string
+	OriginalResolvedKeys map[string]string // snapshot for change detection
+
+	// Error message
+	ErrorMessage string
+
+	// Dropdown state (Add Provider screen)
+	ShowDropdown   bool
+	DropdownCursor int
+
+	// Model dropdown state (Add Provider screen)
+	ShowModelDropdown   bool
+	ModelDropdownCursor int
+
+	// Route name dropdown state (Edit Route screen)
+	ShowRouteNameDropdown   bool
+	RouteNameDropdownCursor int
+}
+
+// ProviderPreset defines preset provider configurations.
+type ProviderPreset struct {
+	BaseURL     string
+	Transformer string
+	Models      []string
+}
+
+// ProviderPresets contains all available provider presets.
+var ProviderPresets = map[string]ProviderPreset{
+	"alicloud": {
+		BaseURL:     "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+		Transformer: "glm_anthropic",
+		Models:      []string{"MiniMax-M2.5", "kimi-k2.5", "qwen3-coder-plus", "glm-5", "glm-4.7"},
+	},
+	"anthropic": {
+		BaseURL:     "https://api.anthropic.com",
+		Transformer: "anthropic",
+		Models:      []string{"claude-haiku-4.5", "claude-sonnet-4.6", "claude-opus-4.5", "claude-opus-4.6"},
+	},
+	"bigmodel": {
+		BaseURL:     "https://open.bigmodel.cn/api",
+		Transformer: "glm_anthropic",
+		Models:      []string{"glm-4.6v", "glm-4.7", "glm-5-turbo", "glm-5v-turbo", "glm-5.1"},
+	},
+	"openrouter": {
+		BaseURL:     "https://openrouter.ai/api",
+		Transformer: "anthropic",
+		Models:      []string{"openai/gpt-5.4", "openai/gpt-5.4-mini", "openai/gpt-5.3-codex", "google/gemini-2.5-flash", "google/gemini-2.5-pro"},
+	},
+	"openrouter-openai": {
+		BaseURL:     "https://openrouter.ai/api",
+		Transformer: "anthropic",
+		Models:      []string{"openai/gpt-5.4", "openai/gpt-5.4-mini", "openai/gpt-5.3-codex"},
+	},
+	"openrouter-anthropic": {
+		BaseURL:     "https://openrouter.ai/api",
+		Transformer: "anthropic",
+		Models:      []string{"anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.5", "anthropic/claude-sonnet-4.6", "anthropic/claude-opus-4.5", "anthropic/claude-opus-4.6"},
+	},
+}
+
+// PredefinedRouteNames are the built-in route names.
+var PredefinedRouteNames = []string{
+	"default",
+	"background",
+	"think",
+	"thinkMore",
+	"ultrathink",
+	"longContext",
+	"image",
+	"webSearch",
+}
+
+// LogLevelOptions are the available log level options.
+var LogLevelOptions = []string{"debug", "info", "warn", "error"}
+
+// LogDestinationOptions are the available log destination options.
+var LogDestinationOptions = []string{"stdout", "stderr", "file"}
+
+// TransformerOptions are the available transformer options.
+var TransformerOptions = []string{"anthropic", "openai", "glm_anthropic", "gemini"}
+
+// NewWizardState creates a new wizard state with defaults.
+func NewWizardState(cfg *config.Config, configPath string) *WizardState {
+	// Pre-resolve API keys from config (placeholders → real values)
+	resolved := make(map[string]string)
+	for name, pCfg := range cfg.Providers {
+		resolved[name] = stripEnvVarPlaceholder(os.ExpandEnv(pCfg.APIKey))
+	}
+
+	// Deep-copy resolved keys for change detection
+	originalResolved := make(map[string]string, len(resolved))
+	for k, v := range resolved {
+		originalResolved[k] = v
+	}
+
+	return &WizardState{
+		CurrentScreen:         ScreenMainMenu,
+		Config:                cfg,
+		ConfigPath:            configPath,
+		HasChanges:            false,
+		OriginalCfg:           deepCopyConfig(cfg),
+		ResolvedAPIKeys:       resolved,
+		OriginalResolvedKeys:  originalResolved,
+		ProviderCursor:        0,
+		MainMenuCursor:        0,
+		ProviderPreset:        "anthropic",
+		NewProviderTransformer: "anthropic",
+		LoggingLevel:          "info",
+		LoggingDestination:    "stdout",
+		LoggingEnabled:        cfg.Logging.Enabled,
+		ServerHost:            cfg.Server.Host,
+		ServerPort:            "8081",
+	}
+}
+
+// deepCopyConfig creates a deep copy of the config.
+func deepCopyConfig(cfg *config.Config) *config.Config {
+	if cfg == nil {
+		return nil
+	}
+	providers := make(map[string]config.ProviderConfig, len(cfg.Providers))
+	for k, v := range cfg.Providers {
+		models := make([]string, len(v.Models))
+		copy(models, v.Models)
+		providers[k] = config.ProviderConfig{
+			APIKey:      v.APIKey,
+			BaseURL:     v.BaseURL,
+			Models:      models,
+			Transformer: v.Transformer,
+		}
+	}
+	routes := make(map[string]string, len(cfg.Router.Routes))
+	for k, v := range cfg.Router.Routes {
+		routes[k] = v
+	}
+	return &config.Config{
+		Server: cfg.Server,
+		Router: config.RouterConfig{
+			Routes:     routes,
+			MaxRetries: cfg.Router.MaxRetries,
+			RetryDelay: cfg.Router.RetryDelay,
+		},
+		Logging:   cfg.Logging,
+		Providers: providers,
+	}
+}
+
+// HasUnsavedChanges returns true if the config has been modified.
+func (s *WizardState) HasUnsavedChanges() bool {
+	if s.Config == nil || s.OriginalCfg == nil {
+		return s.HasChanges
+	}
+	if !configsEqual(s.Config, s.OriginalCfg) {
+		return true
+	}
+	// Also check if resolved API keys changed (env var templates stay the same
+	// but the actual key values may differ after editing)
+	return !resolvedKeysEqual(s.ResolvedAPIKeys, s.OriginalResolvedKeys)
+}
+
+// resolvedKeysEqual compares two resolved API key maps for equality.
+func resolvedKeysEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok || av != bv {
+			return false
+		}
+	}
+	return true
+}
+
+// ResolvedKeys returns the resolved API keys map from the wizard model.
+func (m *WizardModel) ResolvedKeys() map[string]string {
+	return m.state.ResolvedAPIKeys
+}
+
+// configsEqual compares two configs for equality.
+func configsEqual(a, b *config.Config) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Server.Host != b.Server.Host || a.Server.Port != b.Server.Port {
+		return false
+	}
+	if len(a.Providers) != len(b.Providers) {
+		return false
+	}
+	for k, av := range a.Providers {
+		bv, ok := b.Providers[k]
+		if !ok {
+			return false
+		}
+		if av.APIKey != bv.APIKey || av.BaseURL != bv.BaseURL || av.Transformer != bv.Transformer {
+			return false
+		}
+		if len(av.Models) != len(bv.Models) {
+			return false
+		}
+		for i, m := range av.Models {
+			if m != bv.Models[i] {
+				return false
+			}
+		}
+	}
+	if len(a.Router.Routes) != len(b.Router.Routes) {
+		return false
+	}
+	for k, v := range a.Router.Routes {
+		if b.Router.Routes[k] != v {
+			return false
+		}
+	}
+	if a.Logging.Enabled != b.Logging.Enabled ||
+		a.Logging.Level != b.Logging.Level ||
+		a.Logging.Destination != b.Logging.Destination ||
+		a.Logging.FilePath != b.Logging.FilePath {
+		return false
+	}
+	return true
+}
+
+// stripEnvVarPlaceholder removes a leading ${CCROUTER_*} env var placeholder from a key.
+// This handles cases where os.ExpandEnv returns the literal placeholder (env var unset)
+// or where the env var was self-referencing (e.g. "${CCROUTER_X}sk-real").
+func stripEnvVarPlaceholder(key string) string {
+	if strings.HasPrefix(key, "${CCROUTER_") {
+		if end := strings.Index(key, "}"); end != -1 {
+			return key[end+1:]
+		}
+	}
+	return key
+}

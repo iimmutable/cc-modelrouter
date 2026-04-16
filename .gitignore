@@ -21,6 +21,8 @@ go.work
 # Go cache
 .gocache/
 .mod-cache/
+.go-cache/
+.go-home/
 
 # IDE
 .idea/

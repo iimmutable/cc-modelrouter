@@ -301,16 +301,16 @@ Use `${VAR_NAME}` syntax for API keys:
 {
   "providers": {
     "openrouter": {
-      "apiKey": "${OPENROUTER_API_KEY}"
+      "apiKey": "${CCROUTER_OPENROUTER_API_KEY}"
     }
   }
 }
 ```
 
 Required environment variables:
-- `OPENROUTER_API_KEY`
-- `GEMINI_API_KEY`
-- `BIGMODEL_API_KEY`
+- `CCROUTER_OPENROUTER_API_KEY`
+- `CCROUTER_GEMINI_API_KEY`
+- `CCROUTER_BIGMODEL_API_KEY`
 - etc. (depends on providers used)
 
 ### Route Format

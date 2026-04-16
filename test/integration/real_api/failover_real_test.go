@@ -146,7 +146,7 @@ type providerConfig struct {
 func TestRealFailover_BigModelInvalidKey_To_OpenRouter(t *testing.T) {
 	openRouterKey := util.GetAPIKey("openrouter")
 	if openRouterKey == "" {
-		t.Skip("OPENROUTER_API_KEY not set")
+		t.Skip("CCROUTER_OPENROUTER_API_KEY not set")
 	}
 
 	providers := map[string]providerConfig{
@@ -217,7 +217,7 @@ func TestRealFailover_BigModelInvalidKey_To_OpenRouter(t *testing.T) {
 func TestRealFailover_OpenRouterInvalidKey_To_Aliyun(t *testing.T) {
 	aliyunKey := util.GetAPIKey("aliyun")
 	if aliyunKey == "" {
-		t.Skip("ALIYUN_API_KEY not set")
+		t.Skip("CCROUTER_ALIYUN_API_KEY not set")
 	}
 
 	providers := map[string]providerConfig{
@@ -354,7 +354,7 @@ func (m *accuracyTracker) Record(instanceID, route, model string, tokens, fallba
 func TestBigModelTokenAccuracy_Simple(t *testing.T) {
 	apiKey := util.GetAPIKey("bigmodel")
 	if apiKey == "" {
-		t.Skip("BIGMODEL_API_KEY not set")
+		t.Skip("CCROUTER_BIGMODEL_API_KEY not set")
 	}
 
 	ctx := createAccuracyTestHandler(t, "bigmodel", apiKey, BigmodelBaseURL, "glm-4.7")
@@ -418,7 +418,7 @@ func TestBigModelTokenAccuracy_Simple(t *testing.T) {
 func TestOpenRouterTokenAccuracy_Simple(t *testing.T) {
 	apiKey := util.GetAPIKey("openrouter")
 	if apiKey == "" {
-		t.Skip("OPENROUTER_API_KEY not set")
+		t.Skip("CCROUTER_OPENROUTER_API_KEY not set")
 	}
 
 	ctx := createAccuracyTestHandler(t, "openrouter", apiKey, OpenRouterBaseURL, "anthropic/claude-haiku-4.5")

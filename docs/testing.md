@@ -68,48 +68,136 @@ go test ./internal/daemon/instance_test.go ./internal/daemon/instance.go
 
 ## Test Organization
 
+<!-- AUTO-GENERATED:START:test-organization -->
+Tests follow Go's black-box/white-box testing patterns. See `.githooks/pre-commit` for enforcement.
+
+| Test Type | Location | Package | Access |
+|-----------|----------|---------|--------|
+| **Black-box** | `<module>/test/` | `package <module>_test` | Exported members only |
+| **White-box** | `<module>/` (alongside source) | `package <module>` | Private + exported members |
+| **Cross-module** | `test/` (root) | Varies | Multiple modules |
+
 ```
 cc-modelrouter/
 ├── internal/
 │   ├── cli/
-│   │   ├── adapters_test.go  # CLI adapter wrapper tests
-│   │   └── root_test.go      # CLI root command tests
+│   │   ├── adapters_test.go            # White-box CLI adapter tests (7)
+│   │   └── root_test.go                # White-box CLI root tests (19)
 │   ├── config/
-│   │   ├── loader_test.go    # Configuration loading tests
-│   │   └── types_test.go     # Configuration type tests
+│   │   ├── loader_test.go              # White-box config loading tests (2)
+│   │   ├── types_test.go               # White-box config type tests (3)
+│   │   └── test/
+│   │       └── loglevel_test.go        # Black-box log level tests (3)
+│   ├── configwizard/
+│   │   ├── connectivity_test.go        # White-box connectivity tests (22)
+│   │   ├── shell_test.go              # White-box shell config tests
+│   │   └── wizard_test.go              # White-box wizard model tests (75)
 │   ├── daemon/
-│   │   ├── instance_test.go  # Instance management tests
-│   │   └── pidfile_test.go   # PID file I/O tests
+│   │   ├── instance_test.go            # White-box instance tests (18)
+│   │   └── pidfile_test.go             # White-box PID file tests (13)
+│   ├── interceptor/
+│   │   ├── max_token_test.go           # White-box max tokens interceptor tests (12)
+│   │   ├── reasoning_test.go           # White-box reasoning interceptor tests (15)
+│   │   └── tool_enhance_test.go        # White-box tool enhance interceptor tests (16)
+│   ├── logging/
+│   │   ├── logging_test.go             # White-box logging tests (9)
+│   │   └── sanitize_test.go            # White-box sanitization tests (4)
+│   ├── monitor/
+│   │   ├── buffer_test.go              # White-box ring buffer tests (7)
+│   │   ├── model_test.go               # White-box TUI model tests (25)
+│   │   ├── poller_test.go              # White-box stats poller tests (2)
+│   │   ├── tailer_test.go              # White-box log tailer tests (3)
+│   │   └── view_test.go                # White-box view helper tests (4)
 │   ├── provider/
-│   │   ├── client_test.go    # Provider client tests
-│   │   └── http_test.go      # HTTP client with retry logic tests
+│   │   ├── client_test.go              # White-box client tests (5)
+│   │   ├── http_test.go                # White-box HTTP client tests (23)
+│   │   ├── streaming_timeout_test.go   # White-box streaming timeout tests (4)
+│   │   └── test/
+│   │       └── repro_test.go           # Black-box provider reproduction tests (2)
 │   ├── proxy/
-│   │   ├── handler_test.go    # HTTP request handler tests
-│   │   ├── server_test.go     # HTTP server lifecycle tests
-│   │   └── streaming_test.go # SSE streaming tests
+│   │   ├── beta_header_test.go         # White-box beta header tests (1)
+│   │   ├── compactor_test.go           # White-box compactor tests (9)
+│   │   ├── error1213_repro_test.go     # White-box error 1213 repro tests (5)
+│   │   ├── files_handler_test.go       # White-box files API tests (5)
+│   │   ├── handler_image_test.go       # White-box image handling tests (7)
+│   │   ├── handler_test.go             # White-box handler tests (36)
+│   │   ├── interceptor_test.go         # White-box interceptor tests (19)
+│   │   ├── server_test.go              # White-box server tests (19)
+│   │   ├── streaming_test.go           # White-box streaming tests (26)
+│   │   └── streaming_timeout_test.go   # White-box streaming timeout tests (2)
 │   ├── router/
-│   │   ├── engine_test.go     # Route detection tests
-│   │   └── failover_test.go   # Failover logic tests
+│   │   ├── engine_test.go              # White-box route detection tests (7)
+│   │   └── failover_test.go            # White-box failover tests (4)
 │   ├── transformer/
-│   │   ├── anthropic_test.go     # Anthropic transformer tests
-│   │   ├── gemini_test.go        # Gemini transformer tests
-│   │   ├── glm_test.go          # GLM transformer tests
-│   │   ├── openai_test.go       # OpenAI transformer tests
-│   │   ├── openrouter_test.go   # OpenRouter transformer tests
-│   │   └── registry_test.go     # Transformer registry tests
+│   │   ├── base_test.go                # White-box base transformer tests (7)
+│   │   ├── registry_test.go            # White-box registry tests (4)
+│   │   ├── test/
+│   │   │   └── integration_test.go     # Black-box integration tests (7)
+│   │   └── transformers/
+│   │       ├── anthropic_normalization_test.go   # White-box normalization tests (3)
+│   │       ├── anthropic_transformer_test.go     # White-box Anthropic tests (2)
+│   │       ├── bigmodel_debug_test.go           # White-box BigModel debug tests (5)
+│   │       ├── content_block_test.go            # White-box content block tests (1)
+│   │       ├── glm_truncation_test.go           # White-box GLM truncation tests (1)
+│   │       ├── image_streaming_test.go          # White-box image streaming tests (7)
+│   │       ├── integration_test.go              # White-box integration tests (3)
+│   │       ├── normalization_test.go            # White-box normalization tests (20)
+│   │       ├── openrouter_conversation_history_test.go  # White-box conversation history (2)
+│   │       ├── openrouter_fix_test.go           # White-box OpenRouter fix tests (1)
+│   │       ├── openrouter_transformer_test.go   # White-box OpenRouter tests (3)
+│   │       └── repro_test.go                   # White-box reproduction tests (4)
 │   └── usage/
-│       ├── db_test.go         # Database operations tests
-│       ├── tracker_test.go    # Usage tracker tests
-│       ├── period_test.go     # Period parsing tests
-│       ├── stats_test.go      # Statistics aggregation tests
-│       └── formatter_test.go   # Output formatting tests
+│       ├── db_test.go                 # White-box database tests (5)
+│       ├── formatter_test.go          # White-box formatter tests (3)
+│       ├── period_test.go             # White-box period tests (4)
+│       ├── stats_test.go              # White-box stats tests (3)
+│       └── tracker_test.go            # White-box tracker tests (6)
 ├── pkg/
 │   └── api/
 │       └── anthropic/
-│           └── types_test.go  # API type marshaling tests
-└── test/
-    └── integration_test.go  # Integration tests
+│           ├── types_test.go          # White-box API type tests (19)
+│           └── test/
+│               ├── thinking_content_test.go     # Black-box thinking tests (13)
+│               ├── types_document_test.go      # Black-box document tests (2)
+│               ├── types_files_spec_test.go    # Black-box files spec tests (1)
+│               └── types_image_test.go         # Black-box image tests (6)
+└── test/                              # Cross-module integration tests
+    ├── aliyun_test.go                 # Aliyun provider tests (4)
+    ├── integration_sse_test.go        # SSE integration tests (1)
+    ├── integration_test.go            # Basic integration tests (1)
+    ├── openrouter_test.go             # OpenRouter tests (2)
+    ├── security/
+    │   └── secret_logging_test.go     # Security tests (6)
+    └── integration/
+        ├── cli/code_command_test.go         # CLI code command tests (15)
+        ├── error/
+        │   ├── edge_case_test.go            # Edge case error tests (11)
+        │   ├── error_recovery_test.go       # Error recovery tests (7)
+        │   └── malformed_response_test.go   # Malformed response tests (4)
+        ├── files/pdf_test.go                # PDF file tests (9)
+        ├── images/provider_image_test.go    # Provider image tests (7)
+        ├── load/
+        │   ├── concurrent_test.go           # Concurrent load tests (8)
+        │   └── stress_test.go               # Stress tests (8)
+        ├── network/
+        │   ├── connection_failure_test.go   # Connection failure tests (8)
+        │   ├── partial_response_test.go     # Partial response tests (8)
+        │   ├── rate_limit_test.go           # Rate limit tests (7)
+        │   ├── retry_logic_test.go          # Retry logic tests (6)
+        │   └── timeout_test.go              # Timeout tests (6)
+        ├── provider_quirks/
+        │   ├── gemini_quirks_test.go        # Gemini quirks tests (7)
+        │   ├── openrouter_quirks_test.go    # OpenRouter quirks tests (7)
+        │   └── qwen_quirks_test.go          # Qwen quirks tests (8)
+        ├── real_api/
+        │   ├── aliyun_real_test.go          # Aliyun real API tests (5)
+        │   ├── bigmodel_real_test.go        # BigModel real API tests (9)
+        │   ├── failover_real_test.go        # Failover real API tests (4)
+        │   ├── glm_fix_test.go              # GLM fix tests (4)
+        │   └── openrouter_real_test.go      # OpenRouter real API tests (9)
+        └── usage_tracking_test.go           # Usage tracking tests (5)
 ```
+<!-- AUTO-GENERATED:end:test-organization -->
 
 ---
 
@@ -183,34 +271,45 @@ The integration test validates:
 
 | Package | Test Files | Test Count | Status |
 |---------|------------|------------|--------|
-| `internal/cli` | adapters_test.go, root_test.go | 34 | ✓ |
-| `internal/config` | loader_test.go, types_test.go | 4 | ✓ |
-| `internal/daemon` | instance_test.go, pidfile_test.go | 32 | ✓ |
-| `internal/provider` | client_test.go, http_test.go | 23 | ✓ |
-| `internal/proxy` | handler_test.go, server_test.go, streaming_test.go | 61 | ✓ |
-| `internal/router` | engine_test.go, failover_test.go | 10 | ✓ |
-| `internal/transformer` | anthropic_test.go, gemini_test.go, glm_test.go, openai_test.go, openrouter_test.go, registry_test.go | ~20 | ✓ |
-| `internal/usage` | db_test.go, tracker_test.go, period_test.go, stats_test.go, formatter_test.go | 19 | ✓ |
-| `pkg/api/anthropic` | types_test.go | 3 | ✓ |
+| `internal/cli` | adapters_test.go, root_test.go, config_test.go | 31 | ✓ |
+| `internal/config` | loader_test.go, types_test.go, test/loglevel_test.go | 8 | ✓ |
+| `internal/configwizard` | wizard_test.go, connectivity_test.go, shell_test.go | 88 | ✓ |
+| `internal/daemon` | instance_test.go, pidfile_test.go | 31 | ✓ |
+| `internal/interceptor` | max_token_test.go, reasoning_test.go, tool_enhance_test.go | 43 | ✓ |
+| `internal/logging` | logging_test.go, sanitize_test.go | 13 | ✓ |
+| `internal/monitor` | buffer_test.go, model_test.go, poller_test.go, tailer_test.go, view_test.go | 43 | ✓ |
+| `internal/provider` | client_test.go, http_test.go, streaming_timeout_test.go, test/repro_test.go | 34 | ✓ |
+| `internal/proxy` | handler_test.go, server_test.go, streaming_test.go, interceptor_test.go, compactor_test.go, +5 more | 135 | ✓ |
+| `internal/router` | engine_test.go, failover_test.go | 11 | ✓ |
+| `internal/transformer` | base_test.go, registry_test.go, test/integration_test.go, transformers/*.go | 70 | ✓ |
+| `internal/usage` | db_test.go, tracker_test.go, period_test.go, stats_test.go, formatter_test.go | 21 | ✓ |
+| `pkg/api/anthropic` | types_test.go, test/*.go (4 files) | 41 | ✓ |
+| `test/` (integration) | files, images, security, integration/ | 22 | ✓ |
 
-**Overall:** **206+ tests** passing across 9 packages
+**Overall:** **591 tests** across 23 packages (569 internal + 22 integration)
 
 ---
 
-## Coverage Goals Achieved
+## Coverage Goals
 
-| Module | Previous Coverage | Current Coverage | Target | Status |
-|--------|------------------|------------------|--------|--------|
-| `daemon` | ~2% | ~90%+ | 90%+ | ✓ |
-| `provider` | ~53% | ~90%+ | 90%+ | ✓ |
-| `proxy` | ~40% | ~90%+ | 90%+ | ✓ |
-| `router` | ~84% | ~84% | 95% | ~ |
-| `cli` | ~0% | ~50%+ | 50%+ | ✓ |
-| `config` | ~47% | ~85% | 90% | ~ |
-| `transformer` | ~77% | ~77% | 90% | ~ |
-| `usage` | ~85% | ~95%+ | 95% | ✓ |
+| Module | Current Coverage | Target | Status |
+|--------|------------------|--------|--------|
+| `daemon` | ~86% | 90%+ | ~ |
+| `interceptor` | ~92% | 90%+ | ✓ |
+| `transformer` (core) | ~96% | 90%+ | ✓ |
+| `usage` | ~89% | 90%+ | ~ |
+| `logging` | ~80% | 90% | ~ |
+| `router` | ~84% | 90% | ~ |
+| `proxy` | ~73% | 90% | ~ |
+| `provider` | ~71% | 90% | ~ |
+| `anthropic` | ~69% | 90% | ~ |
+| `transformer/transformers` | ~45% | 90% | ~ |
+| `monitor` | ~36% | 60%+ | ~ |
+| `config` | ~36% | 90% | ~ |
+| `configwizard` | ~25% | 60%+ | ~ |
+| `cli` | ~9% | 50%+ | ~ |
 
-**Overall Target:** 85%+ test coverage across the codebase ✓ **ACHIEVED**
+**Overall:** ~39% average coverage across 23 packages
 
 ---
 

@@ -92,6 +92,41 @@ func convertUserThinkingToText(req *anthropic.Request) {
 	}
 }
 
+// stripAssistantThinkingBlocks removes thinking and redacted_thinking blocks from
+// assistant messages. This is a workaround for BigModel's Anthropic-compatible endpoint
+// which returns error 1213 when assistant messages contain thinking blocks.
+//
+// BigModel does support thinking via native reasoning_content format, but their
+// Anthropic endpoint doesn't properly convert Anthropic thinking blocks. A degraded
+// response (without thinking context) is better than 100% failure.
+func stripAssistantThinkingBlocks(req *anthropic.Request) {
+	for i := range req.Messages {
+		if req.Messages[i].Role != anthropic.RoleAssistant {
+			continue
+		}
+
+		hasThinking := false
+		for _, block := range req.Messages[i].Content {
+			if block.Type == "thinking" || block.Type == "redacted_thinking" {
+				hasThinking = true
+				break
+			}
+		}
+
+		if !hasThinking {
+			continue
+		}
+
+		var filtered []anthropic.ContentBlock
+		for _, block := range req.Messages[i].Content {
+			if block.Type != "thinking" && block.Type != "redacted_thinking" {
+				filtered = append(filtered, block)
+			}
+		}
+		req.Messages[i].Content = filtered
+	}
+}
+
 // normalizeSingleElementContent ensures ANY content array without text blocks
 // is normalized to prevent provider validation errors.
 // This handles: single thinking, multiple thinking, single image, single tool_result,
@@ -136,7 +171,7 @@ func normalizeSingleElementContent(req *anthropic.Request) {
 		if !hasValidTextBlock {
 			req.Messages[i].Content = append(content, anthropic.ContentBlock{
 				Type: "text",
-				Text: " ",
+				Text: "[thinking context removed for provider compatibility]",
 			})
 		}
 	}

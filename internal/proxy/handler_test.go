@@ -680,6 +680,30 @@ func TestHandler_Setters(t *testing.T) {
 	}
 }
 
+func TestIsErrorCode1213(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"string code", `{"error":{"code":"1213","message":"prompt not received"}}`, true},
+		{"numeric code", `{"error":{"code":1213,"message":"prompt not received"}}`, true},
+		{"Chinese text", `{"error":{"message":"未正常接收到prompt参数"}}`, true},
+		{"normal error", `{"error":{"code":"400","message":"bad request"}}`, false},
+		{"empty body", ``, false},
+		{"1213 in unrelated context", `{"data":{"count":1213}}`, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isErrorCode1213(tt.body)
+			if got != tt.want {
+				t.Errorf("isErrorCode1213(%q) = %v, want %v", tt.body, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHandleMessages_UsageTracking(t *testing.T) {
 	handler := NewHandler(1024 * 1024)
 
@@ -759,6 +783,84 @@ func TestHandleMessages_UsageTracking(t *testing.T) {
 	if record.tokens != expectedTokens {
 		t.Errorf("expected %d tokens (actual input + output from provider), got %d",
 			expectedTokens, record.tokens)
+	}
+}
+
+func TestHandleMessages_FailoverFallbackCount(t *testing.T) {
+	handler := NewHandler(1024 * 1024)
+
+	tracker := &mockUsageTracker{}
+	handler.SetUsageTracker(tracker)
+	handler.SetInstanceID("inst-123")
+
+	handler.SetRouter(&mockRouter{
+		detectRouteFunc: func(req router.RouteRequest) string {
+			return "test-route"
+		},
+		getTargetsFunc: func(routeName string) []config.RouteTarget {
+			return []config.RouteTarget{
+				{Provider: "provider-a", Model: "model-a"},
+				{Provider: "provider-b", Model: "model-b"},
+			}
+		},
+	})
+
+	callCount := 0
+	mockClient := &mockHTTPClient{
+		doFunc: func(req *http.Request) (*http.Response, error) {
+			callCount++
+			if callCount == 1 {
+				return nil, fmt.Errorf("provider-a failed")
+			}
+			resp := &anthropic.Response{
+				ID:      "msg_456",
+				Type:    "message",
+				Content: []anthropic.ContentBlock{{Type: "text", Text: "success"}},
+				Usage:   anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+			}
+			body, _ := json.Marshal(resp)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(body)),
+			}, nil
+		},
+	}
+	handler.SetProviderClients(map[string]HTTPClient{
+		"provider-a": mockClient,
+		"provider-b": mockClient,
+	})
+	handler.SetTransformerRegistry(&mockTransformerRegistry{})
+	handler.SetConfig(&config.Config{
+		Providers: map[string]config.ProviderConfig{
+			"provider-a": {BaseURL: "https://a.example.com", APIKey: "key-a", Transformer: "anthropic"},
+			"provider-b": {BaseURL: "https://b.example.com", APIKey: "key-b", Transformer: "anthropic"},
+		},
+	})
+
+	reqBody := `{
+		"model": "claude-3-5-sonnet-20241022",
+		"max_tokens": 1024,
+		"messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	anthropicReq := &anthropic.Request{}
+	json.Unmarshal([]byte(reqBody), anthropicReq)
+	handler.handleMessages(w, req, anthropicReq)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	if len(tracker.records) != 1 {
+		t.Fatalf("expected 1 usage record, got %d", len(tracker.records))
+	}
+	record := tracker.records[0]
+	if record.fallbacks != 1 {
+		t.Errorf("expected 1 fallback (provider-a failed, provider-b succeeded), got %d", record.fallbacks)
+	}
+	if record.model != "model-b" {
+		t.Errorf("expected model 'model-b', got %s", record.model)
 	}
 }
 

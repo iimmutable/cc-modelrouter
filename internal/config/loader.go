@@ -19,7 +19,7 @@ func ProjectConfigPath(projectRoot string) string {
 	return filepath.Join(projectRoot, ".cc-modelrouter", "config.json")
 }
 
-// Load loads configuration from a file.
+// Load loads configuration from a file, interpolating ${VAR} references.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -36,6 +36,23 @@ func Load(path string) (*Config, error) {
 
 	cfg := Defaults()
 	if err := json.Unmarshal([]byte(expanded), cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	return cfg, nil
+}
+
+// LoadRaw loads configuration from a file without interpolating ${VAR} references.
+// This preserves environment variable placeholders in the in-memory config,
+// so they are not lost when the config is saved back to disk.
+func LoadRaw(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	cfg := Defaults()
+	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 

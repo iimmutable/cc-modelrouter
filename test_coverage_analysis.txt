@@ -1,0 +1,165 @@
+===============================
+Test Coverage Analysis
+===============================
+
+Question: Does the test suite cover real fallback tests and real usage tracking (with accuracy) tests?
+
+## 1. FALLBACK/FAILOVER TESTS
+
+### ✅ GOOD COVERAGE - But using MOCK servers, not real provider failures
+
+**Unit Tests:**
+- `internal/router/failover_test.go` - Tests failover iteration logic
+  - TestFailoverMaxAttempts - Verifies max attempts = 2x targets
+  - TestFailoverIteration - Tests looping through providers
+  - TestFailoverExhaustion - Tests running out of providers
+  - TestFailoverHasMore - Tests hasMore() state tracking
+
+**Integration Tests:**
+- `test/integration/error/error_recovery_test.go` (requires `-tags=error_tests`)
+  - TestProviderFailover - Primary fails, backup succeeds ✓
+  - TestMultipleFailoverPaths - Tests 3-provider chain failover ✓
+  - TestErrorPropagation - Tests different HTTP error codes ✓
+  - TestContextCancellationDuringFailover - Tests cancel mid-failover ✓
+  - TestFailoverStateRecovery - Tests state resets between requests ✓
+  - TestConcurrentFailover - Tests 10 concurrent requests with failover ✓
+  - TestStreamingErrorRecovery - Tests failover during streaming ✓
+
+**Network Tests:**
+- `test/integration/network/retry_logic_test.go`
+  - TestExponentialBackoff - Retry delay increases ✓
+  - TestMaxRetries - Retry limit respected ✓
+  - TestRetryOnSpecificErrors - Only retryable errors trigger retry ✓
+
+### ⚠️ LIMITATION - No REAL provider failure tests
+
+The real provider tests (`-tags=integration_real`) test:
+- Successful requests to Aliyun, BigModel, OpenRouter
+- Authentication failures (with bad API keys)
+- But they do NOT test actual failover between real providers
+
+**Example from real API tests:**
+```go
+// test/integration/real_api/provider_tests.go
+func TestGLMAuthenticationFailure(t *testing.T) {
+    // Only tests 401 errors, not failover to backup
+}
+```
+
+**What's Missing:**
+- Test with real provider1 down → real provider2 succeeds
+- Test with real provider timeout → real provider2 takes over
+- Test failover with actual API rate limits (not mocked)
+
+---
+
+## 2. USAGE TRACKING ACCURACY TESTS
+
+### ⚠️ LIMITED COVERAGE - Basic verification only
+
+**Unit Tests:**
+- `internal/usage/tracker_test.go` - Tests tracker mechanics
+  - TestTrackerRecord - Records buffered and flushed ✓
+  - TestTrackerFlushOnShutdown - Shutdown flushes records ✓
+  - TestTrackerFlushOnTimeout - Timeout flushes records ✓
+  - TestTrackerConcurrent - Concurrent recording safe ✓
+
+**Integration Tests:**
+- `test/integration_test.go` - TestIntegrationBasicRequest
+  ```go
+  if record.Tokens <= 0 {
+      t.Errorf("Tokens should be > 0, got %d", record.Tokens)
+  }
+  ```
+  - Only verifies tokens > 0
+  - Does NOT verify accuracy against provider-reported values
+
+- `test/openrouter_test.go` - TestOpenRouterClaudeSonnet45
+  ```go
+  t.Logf("Usage tracking verified: route=%s, model=%s, tokens=%d",
+      record.Route, record.Model, record.Tokens)
+  ```
+  - Only logs values, doesn't validate accuracy
+
+**Real Provider Tests:**
+- `test/integration/real_api/provider_tests.go`
+  - Tests use `mockTracker` that records tokens
+  - But no validation against actual provider response
+  - No verification that `input_tokens + output_tokens = total`
+
+### ❌ MISSING - Accuracy validation tests
+
+**What's NOT tested:**
+
+1. **Provider-reported token accuracy:**
+   - No test extracts `usage.input_tokens` from response
+   - No test extracts `usage.output_tokens` from response
+   - No test verifies: `tracked == input + output`
+
+2. **Streaming `message_delta` token tracking:**
+   - Code in `handler.go:509-517` extracts tokens from `message_delta`
+   - But no test verifies this works with real providers
+   - GLM specifically sends both input/output in `message_delta`
+
+3. **Fallback vs estimate:**
+   - Code uses `estimateTokens()` when provider doesn't send usage
+   - No test verifies when estimate is used vs actual
+   - No test validates estimate accuracy
+
+**Example from handler.go (untested):**
+```go
+// Line 509-517
+if outputTokens, ok := usage["output_tokens"].(float64); ok {
+    totalOutputTokens += int(outputTokens)
+    logging.StreamDebugf("[USAGE] Accumulated output_tokens: %d", ...)
+}
+if inputTokens, ok := usage["input_tokens"].(float64); ok {
+    totalInputTokens = int(inputTokens)
+    logging.StreamDebugf("[USAGE] Provider sent input_tokens: %d...")
+}
+```
+
+---
+
+## SUMMARY
+
+| Feature | Mock Tests | Real Provider Tests | Accuracy Tests |
+|---------|-----------|---------------------|----------------|
+| **Failover Logic** | ✅ Comprehensive | ⚠️ Basic (auth failures) | ❌ None |
+| **Usage Tracking** | ✅ Mechanics work | ⚠️ Records created | ❌ Not validated |
+| **Token Accuracy** | ❌ N/A | ❌ Not verified | ❌ Missing |
+
+---
+
+## RECOMMENDATIONS
+
+### Priority 1: Add Real Failover Tests
+```go
+// test/integration/real_api/failover_real_test.go
+func TestRealProviderFailover_BigModelToOpenRouter(t *testing.T) {
+    // Configure route: bigmodel:glm-4.7;openrouter:claude-haiku-4.5
+    // Use invalid BigModel key to force failover
+    // Verify OpenRouter succeeds
+    // Verify usage tracked for OpenRouter, not BigModel
+}
+```
+
+### Priority 2: Add Token Accuracy Tests
+```go
+// test/integration/real_api/token_accuracy_test.go
+func TestGLMTokenAccuracy(t *testing.T) {
+    // Make request to GLM
+    // Extract usage from response JSON
+    // Verify tracker.Record() received exact input+output
+    // Test both streaming and non-streaming
+}
+```
+
+### Priority 3: Add message_delta Token Tests
+```go
+func TestGLMMessageDeltaTokens(t *testing.T) {
+    // GLM sends both input/output in message_delta
+    // Verify handler extracts both correctly
+    // Verify total tokens = input + output
+}
+```

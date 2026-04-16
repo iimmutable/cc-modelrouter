@@ -31,7 +31,7 @@ Available Commands:
   clean   Remove stale instance files
   config  Show or manage configuration
   logs    Show instance logs
-  usage   Show token usage statistics
+  monitor Live usage monitor with terminal UI
 
 Use "ccrouter [command] --help" for more information about a command.`,
 		Version: Version,
@@ -45,7 +45,7 @@ Use "ccrouter [command] --help" for more information about a command.`,
 	cmd.AddCommand(NewCleanCommand())
 	cmd.AddCommand(NewConfigCommand())
 	cmd.AddCommand(NewLogsCommand())
-	cmd.AddCommand(NewUsageCommand())
+	cmd.AddCommand(NewMonitorCommand())
 
 	return cmd
 }

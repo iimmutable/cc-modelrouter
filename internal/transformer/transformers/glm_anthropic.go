@@ -67,14 +67,19 @@ func (t *GLMAnthropicTransformer) PrepareRequest(req *anthropic.Request, baseURL
 		return nil, fmt.Errorf("failed to unmarshal request deep copy: %w", err)
 	}
 	reqCopy.Model = model
+	reqCopy.Stream = true // GLM always streams; stream=false causes error 1213
 
 	// CRITICAL: Process in order to ensure correct content format
-	// 1. First, convert user thinking blocks to text (prevents format issues)
-	// 2. Then, normalize ALL single-element content (ensures multi-element arrays)
-	// 3. Validate and repair blocks with missing required fields
+	// 1. Convert user thinking blocks to text (prevents format issues)
+	// 2. Strip thinking blocks from assistant messages (BigModel Anthropic endpoint bug workaround)
+	// 3. Normalize ALL single-element content (ensures multi-element arrays)
+	// 4. Validate and repair blocks with missing required fields
+	// 5. Truncate tool names exceeding GLM's 64-character limit
 	convertUserThinkingToText(&reqCopy)
+	stripAssistantThinkingBlocks(&reqCopy)
 	normalizeSingleElementContent(&reqCopy)
 	validateAndRepairBlocks(&reqCopy)
+	truncateToolNames(&reqCopy)
 
 	// GLM-specific: Ensure signature field is present for thinking blocks
 	// We do this AFTER normalization to ensure signature is set
@@ -155,4 +160,27 @@ func (t *GLMAnthropicTransformer) SupportsStreaming() bool {
 // TransformStreamEvent passes through Anthropic events unchanged.
 func (t *GLMAnthropicTransformer) TransformStreamEvent(event *transformer.SSEEvent) ([]transformer.SSEEvent, error) {
 	return t.AnthropicTransformer.TransformStreamEvent(event)
+}
+
+// maxToolNameLength is the maximum tool name length supported by GLM providers.
+// Aliyun DashScope and BigModel both enforce a 64-character limit on tool names.
+// Claude Code sends tools like "mcp__plugin_everything-claude-code_github__create_pull_request_review"
+// (70+ chars) which exceeds this limit.
+const maxToolNameLength = 64
+
+// truncateToolNames truncates tool names that exceed GLM's 64-character limit.
+// Names are truncated to 57 chars + "_" + 6-char hex hash suffix (total 64) to preserve
+// uniqueness when multiple long tool names share the same prefix.
+func truncateToolNames(req *anthropic.Request) {
+	if len(req.Tools) == 0 {
+		return
+	}
+	for i := range req.Tools {
+		if len(req.Tools[i].Name) > maxToolNameLength {
+			originalName := req.Tools[i].Name
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(originalName)))[:6]
+			req.Tools[i].Name = originalName[:57] + "_" + hash
+			logging.StreamDebugf("[GLM] Truncated tool name (%d chars): %s -> %s", len(originalName), originalName, req.Tools[i].Name)
+		}
+	}
 }

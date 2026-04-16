@@ -40,15 +40,15 @@ func TestNormalizeAssistantMessages_SingleThinkingBlock(t *testing.T) {
 		return
 	}
 
-	// Verify the second block is a text block with single space
+	// Verify the second block is a text block with placeholder
 	if req.Messages[1].Content[1].Type != "text" {
 		t.Errorf("Expected second block to be text type, got %s", req.Messages[1].Content[1].Type)
 	}
-	if req.Messages[1].Content[1].Text != " " {
-		t.Errorf("Expected second block to have single space text, got %q", req.Messages[1].Content[1].Text)
+	if req.Messages[1].Content[1].Text != "[thinking context removed for provider compatibility]" {
+		t.Errorf("Expected second block to have placeholder text, got %q", req.Messages[1].Content[1].Text)
 	}
 
-	t.Logf("SUCCESS: Normalization added text block with single space")
+	t.Logf("SUCCESS: Normalization added text block with placeholder")
 	t.Logf("  First block: type=%s, thinking=%d chars", req.Messages[1].Content[0].Type, len(req.Messages[1].Content[0].Thinking))
 	t.Logf("  Second block: type=%s, text=%q", req.Messages[1].Content[1].Type, req.Messages[1].Content[1].Text)
 }
@@ -254,13 +254,13 @@ func TestNormalizeAssistantMessages_MultipleThinkingBlocks_AddText(t *testing.T)
 		return
 	}
 
-	// Verify the last block is a text block with single space
+	// Verify the last block is a text block with placeholder
 	lastBlock := req.Messages[1].Content[len(req.Messages[1].Content)-1]
 	if lastBlock.Type != "text" {
 		t.Errorf("Expected last block to be text, got %s", lastBlock.Type)
 	}
-	if lastBlock.Text != " " {
-		t.Errorf("Expected text block to be single space, got %q", lastBlock.Text)
+	if lastBlock.Text != "[thinking context removed for provider compatibility]" {
+		t.Errorf("Expected text block to be placeholder text, got %q", lastBlock.Text)
 	}
 
 	t.Logf("SUCCESS: Multiple thinking blocks message normalized with text block")
@@ -625,4 +625,173 @@ func TestNormalizeSingleElementContent_TextBlock_NoChange(t *testing.T) {
 	} else {
 		t.Logf("SUCCESS: Single text block not modified (will marshal as string)")
 	}
+}
+
+// ============================================
+// Tests for stripAssistantThinkingBlocks
+// ============================================
+
+// TestStripAssistantThinkingBlocks_ThinkingAndText tests that thinking blocks are
+// stripped from assistant messages while text blocks are preserved.
+func TestStripAssistantThinkingBlocks_ThinkingAndText(t *testing.T) {
+	req := &anthropic.Request{
+		Model:     "glm-4",
+		MaxTokens: 4096,
+		Messages: []anthropic.Message{
+			{
+				Role:    "user",
+				Content: anthropic.MessageContent{{Type: "text", Text: "Hello"}},
+			},
+			{
+				Role: "assistant",
+				Content: anthropic.MessageContent{
+					{Type: "thinking", Thinking: "Deep thoughts...", Signature: strPtr("")},
+					{Type: "tool_use", ID: "toolu_123", Name: "Grep", Input: json.RawMessage(`{"pattern":"test"}`)},
+					{Type: "text", Text: "Here are the results"},
+				},
+			},
+		},
+	}
+
+	stripAssistantThinkingBlocks(req)
+
+	assistantContent := req.Messages[1].Content
+	if len(assistantContent) != 2 {
+		t.Fatalf("Expected 2 content blocks (tool_use + text), got %d", len(assistantContent))
+	}
+	if assistantContent[0].Type != "tool_use" {
+		t.Errorf("Expected first block to be tool_use, got %s", assistantContent[0].Type)
+	}
+	if assistantContent[1].Type != "text" {
+		t.Errorf("Expected second block to be text, got %s", assistantContent[1].Type)
+	}
+	if assistantContent[1].Text != "Here are the results" {
+		t.Errorf("Expected text preserved, got %q", assistantContent[1].Text)
+	}
+	t.Logf("SUCCESS: Thinking stripped, tool_use and text preserved")
+}
+
+// TestStripAssistantThinkingBlocks_OnlyThinking tests that assistant messages with
+// only thinking blocks become empty (normalizeSingleElementContent will add " " later).
+func TestStripAssistantThinkingBlocks_OnlyThinking(t *testing.T) {
+	req := &anthropic.Request{
+		Model:     "glm-4",
+		MaxTokens: 4096,
+		Messages: []anthropic.Message{
+			{
+				Role:    "user",
+				Content: anthropic.MessageContent{{Type: "text", Text: "Hello"}},
+			},
+			{
+				Role: "assistant",
+				Content: anthropic.MessageContent{
+					{Type: "thinking", Thinking: "Just thinking...", Signature: strPtr("")},
+				},
+			},
+		},
+	}
+
+	stripAssistantThinkingBlocks(req)
+
+	assistantContent := req.Messages[1].Content
+	if len(assistantContent) != 0 {
+		t.Fatalf("Expected 0 content blocks after stripping, got %d", len(assistantContent))
+	}
+	t.Logf("SUCCESS: Assistant with only thinking blocks becomes empty")
+}
+
+// TestStripAssistantThinkingBlocks_RedactedThinking tests that redacted_thinking
+// blocks are also stripped from assistant messages.
+func TestStripAssistantThinkingBlocks_RedactedThinking(t *testing.T) {
+	req := &anthropic.Request{
+		Model:     "glm-4",
+		MaxTokens: 4096,
+		Messages: []anthropic.Message{
+			{
+				Role:    "user",
+				Content: anthropic.MessageContent{{Type: "text", Text: "Hello"}},
+			},
+			{
+				Role: "assistant",
+				Content: anthropic.MessageContent{
+					{Type: "redacted_thinking", Data: "somedata"},
+					{Type: "text", Text: "Response"},
+				},
+			},
+		},
+	}
+
+	stripAssistantThinkingBlocks(req)
+
+	assistantContent := req.Messages[1].Content
+	if len(assistantContent) != 1 {
+		t.Fatalf("Expected 1 content block, got %d", len(assistantContent))
+	}
+	if assistantContent[0].Type != "text" {
+		t.Errorf("Expected text block, got %s", assistantContent[0].Type)
+	}
+	if assistantContent[0].Text != "Response" {
+		t.Errorf("Expected text preserved, got %q", assistantContent[0].Text)
+	}
+	t.Logf("SUCCESS: Redacted thinking stripped, text preserved")
+}
+
+// TestStripAssistantThinkingBlocks_UserMessagesUntouched tests that user messages
+// with thinking blocks are not modified by stripAssistantThinkingBlocks.
+func TestStripAssistantThinkingBlocks_UserMessagesUntouched(t *testing.T) {
+	req := &anthropic.Request{
+		Model:     "glm-4",
+		MaxTokens: 4096,
+		Messages: []anthropic.Message{
+			{
+				Role: "user",
+				Content: anthropic.MessageContent{
+					{Type: "thinking", Thinking: "User thinking..."},
+					{Type: "text", Text: "Hello"},
+				},
+			},
+		},
+	}
+
+	originalLen := len(req.Messages[0].Content)
+	stripAssistantThinkingBlocks(req)
+
+	if len(req.Messages[0].Content) != originalLen {
+		t.Errorf("User message should not be modified, got %d blocks instead of %d",
+			len(req.Messages[0].Content), originalLen)
+	}
+	if req.Messages[0].Content[0].Type != "thinking" {
+		t.Errorf("User thinking block should remain, got %s", req.Messages[0].Content[0].Type)
+	}
+	t.Logf("SUCCESS: User messages with thinking blocks left untouched")
+}
+
+// TestStripAssistantThinkingBlocks_NoThinkingUntouched tests that assistant messages
+// without thinking blocks are not modified.
+func TestStripAssistantThinkingBlocks_NoThinkingUntouched(t *testing.T) {
+	req := &anthropic.Request{
+		Model:     "glm-4",
+		MaxTokens: 4096,
+		Messages: []anthropic.Message{
+			{
+				Role:    "user",
+				Content: anthropic.MessageContent{{Type: "text", Text: "Hello"}},
+			},
+			{
+				Role: "assistant",
+				Content: anthropic.MessageContent{
+					{Type: "text", Text: "Hi there"},
+				},
+			},
+		},
+	}
+
+	originalLen := len(req.Messages[1].Content)
+	stripAssistantThinkingBlocks(req)
+
+	if len(req.Messages[1].Content) != originalLen {
+		t.Errorf("Assistant without thinking should not be modified, got %d blocks instead of %d",
+			len(req.Messages[1].Content), originalLen)
+	}
+	t.Logf("SUCCESS: Assistant without thinking blocks left untouched")
 }

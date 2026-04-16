@@ -64,7 +64,7 @@ Project configuration **completely overrides** global configuration when present
 {
   "providers": {
     "openrouter-anthropic": {
-      "apiKey": "${OPENROUTER_API_KEY}",
+      "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
       "baseURL": "https://openrouter.ai/api",
       "transformer": "openrouter",
       "models": [
@@ -84,6 +84,36 @@ Project configuration **completely overrides** global configuration when present
 | `models` | []string | Yes | List of available models |
 | `transformer` | string | No | Transformer name (defaults to provider name) |
 | `disableKeepAlives` | bool | No | Disable HTTP keep-alive connections (default: `false`). Use for providers with connection issues. |
+| `maxRequestBodyBytes` | int64 | No | Maximum request body size in bytes (default: `0` = no limit). |
+| `compaction` | object | No | Request compaction settings (see below). |
+
+### Request Compaction
+
+<!-- AUTO-GENERATED:START:compaction -->
+Providers may have context window limits. Request compaction reduces large requests to fit within provider constraints.
+
+```json
+{
+  "bigmodel": {
+    "apiKey": "${CCROUTER_BIGMODEL_API_KEY}",
+    "baseURL": "https://open.bigmodel.cn/api/anthropic",
+    "models": ["glm-4.7"],
+    "compaction": {
+      "method": "llm",
+      "summarizeProvider": "openrouter:anthropic/claude-sonnet-4",
+      "summarizeModel": ""
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `method` | string | `"llm"` | Compaction method: `"llm"` (summarize via provider) or `"trim"` (truncate messages) |
+| `summarizeProvider` | string | auto-detect | Provider for LLM summarization (format: `"provider:model"`) |
+| `summarizeModel` | string | provider default | Model override for summarization |
+
+<!-- AUTO-GENERATED:END:compaction -->
 
 ### Supported Providers
 
@@ -96,11 +126,10 @@ OpenRouter provides a **unified Anthropic-compatible API** for all models (Claud
 ```json
 {
   "openrouter-anthropic": {
-    "apiKey": "${OPENROUTER_API_KEY}",
+    "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
     "baseURL": "https://openrouter.ai/api",
     "transformer": "openrouter",
-    "models": ["anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.5"],
-    "timeout": "60s"
+    "models": ["anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.5"]
   }
 }
 ```
@@ -116,11 +145,10 @@ OpenRouter provides a **unified Anthropic-compatible API** for all models (Claud
 ```json
 {
   "openrouter-openai": {
-    "apiKey": "${OPENROUTER_API_KEY}",
+    "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
     "baseURL": "https://openrouter.ai/api",
     "transformer": "openrouter",
-    "models": ["google/gemini-2.5-flash", "google/gemini-2.5-pro"],
-    "timeout": "60s"
+    "models": ["google/gemini-2.5-flash", "google/gemini-2.5-pro"]
   }
 }
 ```
@@ -143,7 +171,7 @@ If you prefer, you can combine all OpenRouter models into a single provider:
 ```json
 {
   "openrouter": {
-    "apiKey": "${OPENROUTER_API_KEY}",
+    "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
     "baseURL": "https://openrouter.ai/api",
     "transformer": "openrouter",
     "models": [
@@ -162,7 +190,7 @@ If you prefer, you can combine all OpenRouter models into a single provider:
 ```json
 {
   "gemini": {
-    "apiKey": "${GEMINI_API_KEY}",
+    "apiKey": "${CCROUTER_GEMINI_API_KEY}",
     "baseURL": "https://generativelanguage.googleapis.com/v1beta",
     "models": ["gemini-2.0-flash", "gemini-2.5-pro"]
   }
@@ -177,7 +205,7 @@ If you prefer, you can combine all OpenRouter models into a single provider:
 ```json
 {
   "qwen": {
-    "apiKey": "${DASHSCOPE_API_KEY}",
+    "apiKey": "${CCROUTER_DASHSCOPE_API_KEY}",
     "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
     "transformer": "openai",
     "models": ["qwen-turbo", "qwen-plus"]
@@ -193,7 +221,7 @@ If you prefer, you can combine all OpenRouter models into a single provider:
 ```json
 {
   "bigmodel": {
-    "apiKey": "${BIGMODEL_API_KEY}",
+    "apiKey": "${CCROUTER_BIGMODEL_API_KEY}",
     "baseURL": "https://open.bigmodel.cn/api/anthropic",
     "models": ["glm-4.7", "glm-4.5-air", "glm-4.6v"]
   }
@@ -208,7 +236,7 @@ If you prefer, you can combine all OpenRouter models into a single provider:
 ```json
 {
   "anthropic": {
-    "apiKey": "${ANTHROPIC_API_KEY}",
+    "apiKey": "${CCROUTER_ANTHROPIC_API_KEY}",
     "baseURL": "https://api.anthropic.com",
     "models": ["claude-sonnet-4-20250514"]
   }
@@ -347,7 +375,7 @@ Use `${VAR_NAME}` or `$VAR_NAME` syntax for secure value injection:
 {
   "providers": {
     "openrouter-anthropic": {
-      "apiKey": "${OPENROUTER_API_KEY}",
+      "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
       "baseURL": "https://openrouter.ai/api",
       "transformer": "openrouter"
     }
@@ -359,9 +387,9 @@ Use `${VAR_NAME}` or `$VAR_NAME` syntax for secure value injection:
 
 ```bash
 # In ~/.bashrc or ~/.zshrc
-export OPENROUTER_API_KEY="sk-or-..."
-export GEMINI_API_KEY="AIza..."
-export BIGMODEL_API_KEY="..."
+export CCROUTER_OPENROUTER_API_KEY="sk-or-..."
+export CCROUTER_GEMINI_API_KEY="AIza..."
+export CCROUTER_BIGMODEL_API_KEY="..."
 ```
 
 ## Complete Example
@@ -374,37 +402,33 @@ export BIGMODEL_API_KEY="..."
   },
   "providers": {
     "bigmodel": {
-      "apiKey": "${BIGMODEL_API_KEY}",
+      "apiKey": "${CCROUTER_BIGMODEL_API_KEY}",
       "baseURL": "https://open.bigmodel.cn/api/anthropic",
       "models": ["glm-4.7", "glm-4.5-air", "glm-4.6v"],
-      "transformer": "glm-anthropic",
-      "timeout": "90s"
+      "transformer": "glm_anthropic"
     },
     "openrouter-anthropic": {
-      "apiKey": "${OPENROUTER_API_KEY}",
+      "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
       "baseURL": "https://openrouter.ai/api",
       "models": ["anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.5"],
-      "transformer": "openrouter",
-      "timeout": "60s"
+      "transformer": "openrouter"
     },
     "openrouter-openai": {
-      "apiKey": "${OPENROUTER_API_KEY}",
+      "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
       "baseURL": "https://openrouter.ai/api",
       "models": ["google/gemini-2.5-flash", "google/gemini-2.5-pro"],
-      "transformer": "openrouter",
-      "timeout": "60s"
+      "transformer": "openrouter"
     },
     "gemini": {
-      "apiKey": "${GEMINI_API_KEY}",
+      "apiKey": "${CCROUTER_GEMINI_API_KEY}",
       "baseURL": "https://generativelanguage.googleapis.com/v1beta",
       "models": ["gemini-2.5-pro", "gemini-2.0-flash"]
     },
     "aliyun": {
-      "apiKey": "${ALIYUN_API_KEY}",
+      "apiKey": "${CCROUTER_ALIYUN_API_KEY}",
       "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
       "models": ["glm-5", "glm-4.7", "MiniMax-M2.5"],
-      "transformer": "glm-anthropic",
-      "timeout": "120s"
+      "transformer": "glm_anthropic"
     }
   },
   "router": {
@@ -441,4 +465,4 @@ When running `ccrouter code` from within the project directory, the project conf
 ccrouter config
 ```
 
-This displays the currently active configuration (global or project-level).
+This launches an interactive configuration wizard where you can view, edit, and export the current configuration. Select "View Config" from the main menu to browse the active configuration (global or project-level).

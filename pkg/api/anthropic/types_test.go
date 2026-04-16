@@ -1198,6 +1198,45 @@ func TestContentBlockThinkingRoundTrip(t *testing.T) {
 	}
 }
 
+// TestRequestStreamFieldMarshaling tests that the stream field is always
+// present in JSON output, even when false. This is required for GLM
+// compatibility — GLM's Anthropic-compatible endpoint returns error 1213
+// ("prompt not received") when the stream field is absent.
+func TestRequestStreamFieldMarshaling(t *testing.T) {
+	baseReq := &Request{
+		Model:     "claude-sonnet-4",
+		MaxTokens: 100,
+		Messages: []Message{
+			{Role: RoleUser, Content: MessageContent{{Type: "text", Text: "hi"}}},
+		},
+	}
+
+	t.Run("stream true includes stream:true", func(t *testing.T) {
+		req := *baseReq
+		req.Stream = true
+		data, err := json.Marshal(&req)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+		if !strings.Contains(string(data), `"stream":true`) {
+			t.Errorf("expected stream:true in JSON, got: %s", string(data))
+		}
+	})
+
+	t.Run("stream false includes stream:false (not omitted)", func(t *testing.T) {
+		req := *baseReq
+		req.Stream = false
+		data, err := json.Marshal(&req)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+		s := string(data)
+		if !strings.Contains(s, `"stream":false`) {
+			t.Errorf("stream:false must be present for GLM compatibility, got: %s", s)
+		}
+	})
+}
+
 // TestMessageContentWithThinkingBlocks tests that MessageContent properly
 // handles messages containing thinking blocks.
 func TestMessageContentWithThinkingBlocks(t *testing.T) {

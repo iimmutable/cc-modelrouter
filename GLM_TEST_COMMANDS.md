@@ -36,12 +36,12 @@ go test -tags=integration_real -cover ./test/integration/real_api/ -run "^TestGL
 
 ### Required Environment Variable
 ```bash
-export BIGMODEL_API_KEY="your-api-key-here"
+export CCROUTER_BIGMODEL_API_KEY="your-api-key-here"
 ```
 
 ### Verify API Key is Set
 ```bash
-echo $BIGMODEL_API_KEY | wc -c
+echo $CCROUTER_BIGMODEL_API_KEY | wc -c
 # Should show > 1 (not just 1 for newline)
 ```
 

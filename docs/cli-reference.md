@@ -205,56 +205,45 @@ ccrouter clean [flags]
 
 ### ccrouter config
 
-Configuration management commands.
+Interactive configuration wizard (TUI).
 
 ```bash
-ccrouter config [subcommand]
-```
-
-**Subcommands:**
-
-#### ccrouter config show
-
-Display the active configuration (API keys are masked).
-
-```bash
-ccrouter config show [-c /path/to/config.json]
+ccrouter config
 ```
 
 **Description:**
-- Displays the currently active configuration as JSON
-- Shows whether using global or project-level config
-- API keys are masked for security
+- Launches a full-screen terminal UI for managing all configuration
+- Menu-driven interface for providers, routes, server, and logging settings
+- Provider presets with autocomplete (alicloud, anthropic, bigmodel, openrouter, openrouter-openai, openrouter-anthropic)
+- Model autocomplete suggestions when adding providers
+- Connection testing for providers
+- View and export current configuration
 
-#### ccrouter config path
+**Wizard Menu:**
+1. **Providers** — Add, edit, delete, and test API providers
+2. **Routes** — Configure routing rules
+3. **Server** — Set host and port
+4. **Logging** — Configure log level and destination
+5. **View Config** — Browse current configuration
+6. **Save & Exit** — Write changes to disk
 
-Show the configuration file search paths.
-
-```bash
-ccrouter config path
-```
-
-#### ccrouter config init
-
-Create a sample configuration file.
-
-```bash
-ccrouter config init [flags]
-```
-
-**Flags:**
-```
-  --global   Create in global location (~/.cc-modelrouter/config.json)
-```
+**Keyboard Shortcuts (within wizard):**
+| Key | Action |
+|-----|--------|
+| `↑/↓` or `k/j` | Navigate |
+| `Enter` | Select |
+| `Tab` | Next field |
+| `Esc` | Back / Cancel |
+| `a` | Add provider |
+| `Del` or `d` | Delete |
 
 **Examples:**
 ```bash
-# Create project-level config
-ccrouter config init
-
-# Create global config
-ccrouter config init --global
+# Launch the configuration wizard
+ccrouter config
 ```
+
+> **Note:** This replaces the old `show`, `path`, and `init` subcommands.
 
 ---
 
@@ -327,6 +316,51 @@ ccrouter usage 20250301-20250315
 - Displays token usage statistics per model, route, and instance
 - Data is stored in SQLite at `~/.cc-modelrouter/usage.db`
 - Uses buffered writes (500 records or 3 seconds) for performance
+
+---
+
+### ccrouter monitor
+
+Live usage monitor with terminal UI.
+
+```bash
+ccrouter monitor [flags]
+```
+
+<!-- AUTO-GENERATED:START:monitor -->
+**Flags:**
+```
+      --refresh duration   Stats refresh interval (default: 1s)
+```
+
+**Description:**
+- Displays a real-time dashboard with usage statistics
+- Stats by route and model (requests, tokens, fallbacks)
+- Date range selection: TODAY, WEEK, MONTH, YTD, TTM
+- Instance filtering with running/stopped indicators
+- Optional console log viewer (press `d` when single instance selected)
+
+**Keyboard Shortcuts:**
+| Key | Action |
+|-----|--------|
+| `q` | Quit |
+| `d` | Toggle console log (single instance only) |
+| `←` / `→` | Navigate date range tabs |
+| `↑` / `↓` | Navigate instance list |
+| `space` | Pause/resume log tail |
+| `1-7` | Toggle log level filters |
+| `r` | Force refresh |
+
+**Examples:**
+```bash
+# Start monitor with default 1s refresh
+ccrouter monitor
+
+# Start with custom refresh interval
+ccrouter monitor --refresh 2s
+```
+
+<!-- AUTO-GENERATED:END:monitor -->
 
 ---
 

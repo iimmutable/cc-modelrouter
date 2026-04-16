@@ -39,13 +39,13 @@ Create `~/.cc-modelrouter/config.json`:
   },
   "providers": {
     "openrouter": {
-      "apiKey": "${OPENROUTER_API_KEY}",
+      "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
       "baseURL": "https://openrouter.ai/api",
       "transformer": "openrouter",
       "models": ["anthropic/claude-sonnet-4"]
     },
     "bigmodel": {
-      "apiKey": "${BIGMODEL_API_KEY}",
+      "apiKey": "${CCROUTER_BIGMODEL_API_KEY}",
       "baseURL": "https://open.bigmodel.cn/api/anthropic",
       "transformer": "anthropic",
       "models": ["glm-4.7", "glm-4.5-air"]
@@ -69,7 +69,7 @@ Create `~/.cc-modelrouter/config.json`:
 **Note:** OpenRouter provides a unified API endpoint (`/v1/messages`) that works with both Anthropic-format models and OpenAI-format models. The key difference is the model identifier:
 ```json
 "openrouter-openai": {
-  "apiKey": "${OPENROUTER_API_KEY}",
+  "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
   "baseURL": "https://openrouter.ai/api/v1",
   "transformer": "openai",
   "models": ["google/gemini-2.5-flash"]
@@ -103,13 +103,13 @@ claude
 |---------|-------------|
 | `ccrouter code` | Start router and launch Claude Code |
 | `ccrouter start` | Start router server standalone |
-| `ccrouter stop [id]` | Stop router instance (or all with `--all`) |
-| `ccrouter restart [id]` | Restart instance |
+| `ccrouter stop [id]` | Stop instance (or all if no ID given) |
+| `ccrouter restart [id]` | Restart instance (or all if no ID given) |
 | `ccrouter status` | Show all running instances |
 | `ccrouter clean` | Remove stale instance files |
-| `ccrouter config` | Show active configuration |
+| `ccrouter config` | Interactive configuration wizard (TUI) |
 | `ccrouter logs [id]` | Show logs for instance |
-| `ccrouter usage [id] [period]` | Show usage statistics |
+| `ccrouter monitor` | Live usage monitor with terminal UI |
 
 ## Configuration
 
@@ -128,7 +128,7 @@ Use `${VAR_NAME}` or `$VAR_NAME` syntax for sensitive values:
 {
   "providers": {
     "openrouter": {
-      "apiKey": "${OPENROUTER_API_KEY}"
+      "apiKey": "${CCROUTER_OPENROUTER_API_KEY}"
     }
   }
 }
@@ -171,6 +171,8 @@ Use `${VAR_NAME}` or `$VAR_NAME` syntax for sensitive values:
 | `transformer` | string | Transformer name (defaults to provider name) |
 | `disableKeepAlives` | bool | Disable HTTP keep-alive for providers with connection issues |
 | `timeout` | string | HTTP timeout (e.g., "60s", "90s") |
+| `maxRequestBodyBytes` | int64 | Maximum request body size in bytes (default: 0 = no limit) |
+| `compaction` | object | Request compaction settings (method, summarizeProvider, summarizeModel) |
 
 ### Logging Configuration
 
@@ -200,23 +202,11 @@ Use `${VAR_NAME}` or `$VAR_NAME` syntax for sensitive values:
 
 ### Usage Tracking
 
-The router tracks token usage statistics per model, route, and instance using SQLite.
+The router tracks token usage statistics per model, route, and instance using SQLite. View live statistics via the `monitor` command.
 
 ```bash
-# Show all-time usage across all instances
-ccrouter usage
-
-# Show usage for specific instance
-ccrouter usage inst_20250315_143022
-
-# Show usage for specific period
-ccrouter usage today
-ccrouter usage this-week
-ccrouter usage this-month
+ccrouter monitor
 ```
-
-**Period Options:**
-- `all-time` (default), `today`, `this-week`, `last-week`, `this-month`, `last-month`, `this-quarter`, `last-quarter`, `this-year`, `last-year`, or custom range `YYYYMMDD-YYYYMMDD`
 
 Data is stored in `~/.cc-modelrouter/usage.db` with buffered writes (500 records or 3 seconds).
 
@@ -224,14 +214,14 @@ Data is stored in `~/.cc-modelrouter/usage.db` with buffered writes (500 records
 
 | Provider | Transformer | API Format | Compatible Models |
 |----------|-------------|------------|-------------------|
-| Anthropic | `anthropic` | Native Anthropic | Claude 3.5 Sonnet, Haiku, Opus |
+| Anthropic | `anthropic` | Native Anthropic | Claude Sonnet 4, Haiku 4.5, Opus 4 |
 | OpenAI | `openai` | OpenAI-compatible | GPT-4, GPT-4 Turbo |
 | OpenRouter | `openrouter` | Anthropic-compatible | All OpenRouter models |
 | Google Gemini | `gemini` | Gemini native | Gemini Pro, Ultra, Flash |
 | Alibaba Qwen | `openai` | OpenAI-compatible | Qwen Turbo, Plus, Max |
-| Zhipu GLM | `glm-anthropic` | Anthropic-compatible | GLM-4, GLM-4 Air |
+| Zhipu GLM | `glm-anthropic` | Anthropic-compatible | GLM-4, GLM-4.5 Air, GLM-4.6v, GLM-4.7 |
 | MiniMax | `anthropic` | Anthropic-compatible | MiniMax models |
-| Aliyun (DashScope) | `glm-anthropic` | Anthropic-compatible | GLM-5, MiniMax-M2.5 |
+| Aliyun (DashScope) | `glm-anthropic` | Anthropic-compatible | GLM-5, GLM-4.7, MiniMax-M2.5 |
 
 ## Architecture
 
@@ -432,6 +422,7 @@ cc-modelrouter/
 ├── internal/
 │   ├── cli/               # CLI commands and adapters
 │   ├── config/            # Configuration loading and validation
+│   ├── configwizard/      # Interactive TUI configuration wizard
 │   ├── daemon/            # Instance management (PID, status)
 │   ├── interceptor/       # Request/response interceptors
 │   ├── logging/           # Logging utilities

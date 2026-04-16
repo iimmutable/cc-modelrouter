@@ -5,7 +5,7 @@
   },
   "providers": {
     "aliyun": {
-      "apiKey": "${ALIYUN_API_KEY}",
+      "apiKey": "${CCROUTER_ALIYUN_API_KEY}",
       "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
       "transformer": "anthropic",
       "models": ["glm-4.7", "MiniMax-M2.5"]

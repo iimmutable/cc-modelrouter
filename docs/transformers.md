@@ -148,7 +148,7 @@ Qwen API uses Anthropic-compatible format. Use the **Anthropic Transformer** (se
 ```json
 {
   "qwen": {
-    "apiKey": "${DASHSCOPE_API_KEY}",
+    "apiKey": "${CCROUTER_DASHSCOPE_API_KEY}",
     "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
     "transformer": "anthropic",
     "models": ["qwen-turbo", "qwen-plus"]

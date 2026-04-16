@@ -165,5 +165,16 @@ Register the `usage` subcommand in `internal/cli/root.go`.
 - Configurable buffer size and flush timeout
 - Export to CSV/JSON
 - Per-model cost calculation (if pricing data available)
-- Real-time usage monitoring
 - Rate limiting based on usage
+
+---
+
+## Live Usage Monitor
+
+In addition to the `ccrouter usage` command, a live terminal UI is available:
+
+```bash
+ccrouter monitor
+```
+
+See [CLI Reference - monitor](cli-reference.md#ccrouter-monitor) for details.

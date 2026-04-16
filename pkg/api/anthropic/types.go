@@ -25,7 +25,7 @@ type Request struct {
 	Tools      []Tool          `json:"tools,omitempty"`
 	ToolChoice any             `json:"tool_choice,omitempty"`
 	Metadata   map[string]any  `json:"metadata,omitempty"`
-	Stream     bool            `json:"stream,omitempty"`
+	Stream     bool            `json:"stream"`
 	Thinking   *ThinkingConfig `json:"thinking,omitempty"`
 }
 

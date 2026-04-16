@@ -186,7 +186,7 @@ Transformers are registered based on provider names. Valid transformer names:
 - `openai`
 - `openrouter`
 - `gemini`
-- `glm`
+- `glm_anthropic`
 
 Use a supported transformer name or omit the `transformer` field to use the default (provider name).
 
@@ -258,7 +258,7 @@ This was caused by a race condition in server startup where the `Start()` method
    ccrouter start
    ```
 
-4. **See the detailed fix documentation:** [connection-refused-fix.md](connection-refused-fix.md)
+4. **See the troubleshooting steps above** for connection refused errors.
 
 ## Thinking Block and Content Validation Errors (CRITICAL)
 
@@ -358,6 +358,38 @@ if err := json.Unmarshal(reqJSON, &reqCopy); err != nil {
 ```
 
 This ensures each provider receives an independent copy of the original request.
+
+---
+
+## BigModel Error 1213
+
+### Issue: BigModel API returns error code 1213
+
+**Symptoms:**
+- Requests to BigModel/GLM provider fail with HTTP 400
+- Error response contains code `1213`
+- Streaming connections terminate unexpectedly
+
+**Root Cause:**
+BigModel API error 1213 is related to connection handling. This can occur when HTTP keep-alive connections become stale or when the server rejects requests on reused connections.
+
+**Solution:**
+Add `"disableKeepAlives": true` to the provider configuration:
+
+```json
+{
+  "bigmodel": {
+    "apiKey": "${CCROUTER_BIGMODEL_API_KEY}",
+    "baseURL": "https://open.bigmodel.cn/api/anthropic",
+    "models": ["glm-4.7", "glm-4.5-air"],
+    "disableKeepAlives": true
+  }
+}
+```
+
+This forces a fresh TCP connection for each request, avoiding stale connection issues.
+
+**Status:** Fixed with enhanced error handling and `disableKeepAlives` provider option.
 
 ---
 

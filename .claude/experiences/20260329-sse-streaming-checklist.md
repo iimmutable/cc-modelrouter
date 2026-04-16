@@ -34,3 +34,5 @@ SSE (Server-Sent Events) streaming has multiple pitfalls that caused recurring i
 6. **Flush on every event** — Use `http.Flusher` interface to flush after each SSE event. Without flushing, events buffer until the stream ends.
 
 7. **Timeout separation** — Streaming needs longer timeouts than non-streaming (10min vs 30s). A large thinking block response can take minutes.
+
+8. **HTTP 200 is not success** — Some providers (BigModel/GLM) return HTTP 200 but send `event: error` SSE events mid-stream. Always inspect SSE event types after `TransformStreamEvent` — never rely on HTTP status codes alone for error detection. See [BigModel Error 1213 Root Cause Catalog](20260402-bigmodel-error-1213-root-cause-catalog.md) for details.

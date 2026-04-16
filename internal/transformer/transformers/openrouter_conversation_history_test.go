@@ -88,13 +88,13 @@ func TestOpenRouter_ConversationHistoryWithThinkingBlocks(t *testing.T) {
 			t.Errorf("Expected first block to be thinking, got %v", thinkingBlock["type"])
 		}
 
-		// Verify second block is text with single space
+		// Verify second block is text with placeholder
 		textBlock := content[1].(map[string]interface{})
 		if textBlock["type"] != "text" {
 			t.Errorf("Expected second block to be text, got %v", textBlock["type"])
 		}
-		if textBlock["text"] != " " {
-			t.Errorf("Expected text block to contain single space, got %q", textBlock["text"])
+		if textBlock["text"] != "[thinking context removed for provider compatibility]" {
+			t.Errorf("Expected text block to contain placeholder, got %q", textBlock["text"])
 		}
 
 		t.Logf("PASS: Thinking block normalized to multi-element array")

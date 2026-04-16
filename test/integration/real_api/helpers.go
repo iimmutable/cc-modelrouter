@@ -13,19 +13,19 @@ import (
 func getAPIKey(provider string) string {
 	switch strings.ToLower(provider) {
 	case "openrouter":
-		return os.Getenv("OPENROUTER_API_KEY")
+		return os.Getenv("CCROUTER_OPENROUTER_API_KEY")
 	case "bigmodel", "glm", "zhipu":
-		return os.Getenv("BIGMODEL_API_KEY")
+		return os.Getenv("CCROUTER_BIGMODEL_API_KEY")
 	case "aliyun", "qwen", "dashscope":
-		return os.Getenv("ALIYUN_API_KEY")
+		return os.Getenv("CCROUTER_ALIYUN_API_KEY")
 	case "anthropic":
-		return os.Getenv("ANTHROPIC_API_KEY")
+		return os.Getenv("CCROUTER_ANTHROPIC_API_KEY")
 	case "openai":
-		return os.Getenv("OPENAI_API_KEY")
+		return os.Getenv("CCROUTER_OPENAI_API_KEY")
 	case "gemini", "google":
-		return os.Getenv("GEMINI_API_KEY")
+		return os.Getenv("CCROUTER_GEMINI_API_KEY")
 	case "minimax":
-		return os.Getenv("MINIMAX_API_KEY")
+		return os.Getenv("CCROUTER_MINIMAX_API_KEY")
 	default:
 		return ""
 	}
@@ -35,6 +35,6 @@ func getAPIKey(provider string) string {
 func skipIfNoKey(t *testing.T, provider string) {
 	key := getAPIKey(provider)
 	if key == "" {
-		t.Skipf("%s_API_KEY not set, skipping real API tests", strings.ToUpper(provider))
+		t.Skipf("CCROUTER_%s_API_KEY not set, skipping real API tests", strings.ToUpper(provider))
 	}
 }

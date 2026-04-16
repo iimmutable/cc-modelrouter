@@ -26,11 +26,22 @@ for FILE in $STAGED_TESTS; do
     fi
 
     # Check if this is alongside source (white-box test)
+    # First check for exact name match (e.g., handler_test.go alongside handler.go)
     SOURCE_FILE="${FILE%_test.go}.go"
     if git ls-files --error-unmatch "$SOURCE_FILE" >/dev/null 2>&1; then
-        # White-box test alongside source - warn but allow
         echo "ℹ️  White-box test (allowed): $FILE"
         continue
+    fi
+
+    # Also allow white-box tests in directories that contain any non-test .go source files
+    # (e.g., integration_test.go in a directory with anthropic.go, glm_anthropic.go, etc.)
+    if git ls-files --error-unmatch "$DIR"/*.go >/dev/null 2>&1; then
+        # Check if any non-test .go files exist in the directory
+        HAS_SOURCE=$(git ls-files "$DIR"/*.go 2>/dev/null | grep -v '_test\.go$' | head -1)
+        if [ -n "$HAS_SOURCE" ]; then
+            echo "ℹ️  White-box test (allowed): $FILE"
+            continue
+        fi
     fi
 
     # Misplaced test file

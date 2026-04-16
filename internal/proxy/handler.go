@@ -262,7 +262,6 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request, req *an
 	}
 
 	// Try each target with failover for non-streaming
-	var fallbackCount int
 	var successfulModel string
 	var lastErr error
 
@@ -284,7 +283,6 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request, req *an
 
 		resp, err := h.tryTarget(r.Context(), req, target)
 		if err != nil {
-			fallbackCount = i
 			lastErr = err
 			logging.Errorf("Target %d (%s/%s) failed: %v", i, target.Provider, target.Model, err)
 			logging.Debugf("[FAILOVER] Falling back to next provider")
@@ -313,7 +311,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request, req *an
 				logging.Infof("[USAGE] Tracking actual usage: %d tokens (input=%d, output=%d)",
 					totalTokens, resp.Usage.InputTokens, resp.Usage.OutputTokens)
 			}
-			h.usageTracker.Record(h.instanceID, routeName, successfulModel, totalTokens, fallbackCount)
+			h.usageTracker.Record(h.instanceID, routeName, successfulModel, totalTokens, i)
 		}
 
 		// Log response details
@@ -631,6 +629,17 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 		} else {
 			logging.StreamDebugf("[PROXY STREAM ERROR] Response: %s", bodyStr)
 		}
+
+		// Check for specific error code 1213 with enhanced logging
+		if isErrorCode1213(bodyStr) {
+			contentLength := int64(0)
+			if httpReq != nil {
+				contentLength = httpReq.ContentLength
+			}
+			logging.Streamf("[PROXY STREAM ERROR 1213] DETAILED - URL: %s, ContentLength: %d, Request Headers: %s, Response: %s",
+				urlStr, contentLength, logging.SanitizeHeadersString(httpReq.Header), bodyStr)
+			return 0, fmt.Errorf("API error 1213 (prompt not received): %s - %s", resp.Status, bodyStr)
+		}
 		return 0, fmt.Errorf("API error: %s - %s", resp.Status, bodyStr)
 	}
 
@@ -678,6 +687,28 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 		if err != nil {
 			logging.StreamDebugf("[TRANSFORM ERROR] Transform error: %v, raw data: %s", err, string(data))
 			continue
+		}
+
+		// Detect provider error events (e.g., BigModel error code 1213) and trigger failover.
+		// BigModel returns HTTP 200 but sends SSE error events mid-stream instead of
+		// failing the HTTP request. Without this check, the error is forwarded to Claude
+		// Code and no failover occurs.
+		for _, te := range transformedEvents {
+			if te.EventType == "error" {
+				var errData map[string]interface{}
+				if json.Unmarshal(te.Data, &errData) == nil {
+					if errObj, ok := errData["error"].(map[string]interface{}); ok {
+						errMsg := fmt.Sprintf("Provider stream error: %v", errObj["message"])
+						if code, ok := errObj["code"]; ok {
+							errMsg = fmt.Sprintf("Provider stream error (code %v): %v", code, errObj["message"])
+						}
+						logging.Streamf("[STREAM ERROR] Provider sent error SSE event, triggering failover: %s", errMsg)
+						return 0, fmt.Errorf("%s", errMsg)
+					}
+				}
+				logging.Streamf("[STREAM ERROR] Provider sent unrecognized error event, triggering failover: %s", string(te.Data))
+				return 0, fmt.Errorf("Provider sent error event: %s", string(te.Data))
+			}
 		}
 
 		// Extract usage data from message_delta events

@@ -11,19 +11,19 @@ import (
 func GetAPIKey(provider string) string {
 	switch strings.ToLower(provider) {
 	case "openrouter":
-		return os.Getenv("OPENROUTER_API_KEY")
+		return os.Getenv("CCROUTER_OPENROUTER_API_KEY")
 	case "bigmodel", "glm", "zhipu":
-		return os.Getenv("BIGMODEL_API_KEY")
+		return os.Getenv("CCROUTER_BIGMODEL_API_KEY")
 	case "aliyun", "qwen", "dashscope":
-		return os.Getenv("ALIYUN_API_KEY")
+		return os.Getenv("CCROUTER_ALIYUN_API_KEY")
 	case "anthropic":
-		return os.Getenv("ANTHROPIC_API_KEY")
+		return os.Getenv("CCROUTER_ANTHROPIC_API_KEY")
 	case "openai":
-		return os.Getenv("OPENAI_API_KEY")
+		return os.Getenv("CCROUTER_OPENAI_API_KEY")
 	case "gemini", "google":
-		return os.Getenv("GEMINI_API_KEY")
+		return os.Getenv("CCROUTER_GEMINI_API_KEY")
 	case "minimax":
-		return os.Getenv("MINIMAX_API_KEY")
+		return os.Getenv("CCROUTER_MINIMAX_API_KEY")
 	default:
 		return ""
 	}
@@ -39,7 +39,7 @@ func SkipIfNoKey(provider string) SkipFunc {
 	return func() (skip bool, reason string) {
 		key := GetAPIKey(provider)
 		if key == "" {
-			return true, fmt.Sprintf("%s_API_KEY not set, skipping test", strings.ToUpper(provider))
+			return true, fmt.Sprintf("CCROUTER_%s_API_KEY not set, skipping test", strings.ToUpper(provider))
 		}
 		return false, ""
 	}
@@ -62,49 +62,49 @@ func AvailableProviders() []Provider {
 	providers := []Provider{
 		{
 			Name:        "OpenRouter (Anthropic)",
-			APIKeyEnv:   "OPENROUTER_API_KEY",
+			APIKeyEnv:   "CCROUTER_OPENROUTER_API_KEY",
 			BaseURL:     "https://openrouter.ai/api",
 			Model:       "anthropic/claude-3.5-sonnet",
 			Transformer: "anthropic",
 		},
 		{
 			Name:        "BigModel (GLM)",
-			APIKeyEnv:   "BIGMODEL_API_KEY",
+			APIKeyEnv:   "CCROUTER_BIGMODEL_API_KEY",
 			BaseURL:     "https://open.bigmodel.cn/api/anthropic",
 			Model:       "glm-4",
 			Transformer: "anthropic",
 		},
 		{
 			Name:        "Aliyun (Qwen)",
-			APIKeyEnv:   "ALIYUN_API_KEY",
+			APIKeyEnv:   "CCROUTER_ALIYUN_API_KEY",
 			BaseURL:     "https://coding.dashscope.aliyuncs.com/apps/anthropic",
 			Model:       "qwen-plus",
 			Transformer: "anthropic",
 		},
 		{
 			Name:        "Anthropic",
-			APIKeyEnv:   "ANTHROPIC_API_KEY",
+			APIKeyEnv:   "CCROUTER_ANTHROPIC_API_KEY",
 			BaseURL:     "https://api.anthropic.com",
 			Model:       "claude-3-5-sonnet-20241022",
 			Transformer: "anthropic",
 		},
 		{
 			Name:        "OpenAI",
-			APIKeyEnv:   "OPENAI_API_KEY",
+			APIKeyEnv:   "CCROUTER_OPENAI_API_KEY",
 			BaseURL:     "https://api.openai.com/v1",
 			Model:       "gpt-4o",
 			Transformer: "openai",
 		},
 		{
 			Name:        "Gemini",
-			APIKeyEnv:   "GEMINI_API_KEY",
+			APIKeyEnv:   "CCROUTER_GEMINI_API_KEY",
 			BaseURL:     "https://generativelanguage.googleapis.com/v1beta",
 			Model:       "gemini-2.0-flash-exp",
 			Transformer: "gemini",
 		},
 		{
 			Name:        "MiniMax",
-			APIKeyEnv:   "MINIMAX_API_KEY",
+			APIKeyEnv:   "CCROUTER_MINIMAX_API_KEY",
 			BaseURL:     "https://api.minimax.chat/v1",
 			Model:       "abab6.5s-chat",
 			Transformer: "minimax",

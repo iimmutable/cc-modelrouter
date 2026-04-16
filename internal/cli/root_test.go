@@ -35,7 +35,7 @@ func TestNewRootCommand_HasSubcommands(t *testing.T) {
 		"clean",
 		"config",
 		"logs",
-		"usage",
+		"monitor",
 	}
 
 	for _, expected := range expectedSubcommands {
@@ -93,7 +93,7 @@ func TestNewRootCommand_SubcommandCounts(t *testing.T) {
 	cmd := NewRootCommand()
 
 	subcommands := cmd.Commands()
-	expectedCount := 9 // code, start, stop, restart, status, clean, config, logs, usage
+	expectedCount := 9 // code, start, stop, restart, status, clean, config, logs, monitor
 
 	if len(subcommands) != expectedCount {
 		t.Errorf("expected %d subcommands, got %d", expectedCount, len(subcommands))
@@ -193,18 +193,6 @@ func TestNewRootCommand_LogsCommand(t *testing.T) {
 	}
 	if logsCmd.Name() != "logs" {
 		t.Errorf("expected subcommand name 'logs', got '%s'", logsCmd.Name())
-	}
-}
-
-func TestNewRootCommand_UsageCommand(t *testing.T) {
-	cmd := NewRootCommand()
-
-	usageCmd, _, _ := cmd.Find([]string{"usage"})
-	if usageCmd == nil {
-		t.Error("expected 'usage' subcommand to exist")
-	}
-	if usageCmd.Name() != "usage" {
-		t.Errorf("expected subcommand name 'usage', got '%s'", usageCmd.Name())
 	}
 }
 
