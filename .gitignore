@@ -15,6 +15,10 @@
 # Output
 /bin/
 
+# Coverage
+coverage.out
+*.cover.html
+
 # Go workspace
 go.work
 

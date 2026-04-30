@@ -514,3 +514,237 @@ func TestListInstances_CorruptedFile_Integration(t *testing.T) {
 		t.Errorf("expected ID 'inst_valid_corrupt', got %s", listed[0].ID)
 	}
 }
+
+// Tests for new profile-related functions
+
+func TestGenerateAdminToken(t *testing.T) {
+	token := GenerateAdminToken()
+
+	if token == "" {
+		t.Error("expected non-empty admin token")
+	}
+
+	// Token should be 32 alphanumeric characters
+	if len(token) != 32 {
+		t.Errorf("expected token length 32, got %d", len(token))
+	}
+
+	// Token should be alphanumeric characters only (a-z, A-Z, 0-9)
+	for _, c := range token {
+		if !isAlphanumeric(c) {
+			t.Errorf("expected alphanumeric character, got '%c'", c)
+		}
+	}
+}
+
+func isAlphanumeric(c rune) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+func TestGenerateAdminToken_Unique(t *testing.T) {
+	token1 := GenerateAdminToken()
+	token2 := GenerateAdminToken()
+
+	if token1 == token2 {
+		t.Error("expected different tokens from consecutive calls")
+	}
+}
+
+func TestGenerateAdminToken_MultipleCalls(t *testing.T) {
+	// Generate multiple tokens and verify they're all unique
+	tokens := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		token := GenerateAdminToken()
+		if tokens[token] {
+			t.Errorf("token %s was generated more than once", token)
+		}
+		tokens[token] = true
+	}
+
+	if len(tokens) != 100 {
+		t.Errorf("expected 100 unique tokens, got %d", len(tokens))
+	}
+}
+
+func TestInstanceMetadata_ProfileFields(t *testing.T) {
+	now := time.Now().Truncate(time.Millisecond)
+	meta := &InstanceMetadata{
+		ID:            "inst_test_profile",
+		Port:          8081,
+		PID:           12345,
+		ConfigType:    "project",
+		ConfigPath:    "/path/to/config.json",
+		ProjectRoot:   "/path/to/project",
+		StartTime:     now,
+		ActiveProfile: "cost-opt",
+		AdminToken:    "abc123def456",
+	}
+
+	data, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("failed to marshal metadata: %v", err)
+	}
+
+	var loaded InstanceMetadata
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("failed to unmarshal metadata: %v", err)
+	}
+
+	if loaded.ActiveProfile != meta.ActiveProfile {
+		t.Errorf("expected ActiveProfile %s, got %s", meta.ActiveProfile, loaded.ActiveProfile)
+	}
+	if loaded.AdminToken != meta.AdminToken {
+		t.Errorf("expected AdminToken %s, got %s", meta.AdminToken, loaded.AdminToken)
+	}
+}
+
+func TestInstanceMetadata_ProfileFields_OmitEmpty(t *testing.T) {
+	// Test that empty profile fields are omitted from JSON
+	meta := &InstanceMetadata{
+		ID:         "inst_test_omit",
+		Port:       8081,
+		PID:        12345,
+		ConfigType: "project",
+		StartTime:  time.Now(),
+		// ActiveProfile and AdminToken are empty
+	}
+
+	data, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("failed to marshal metadata: %v", err)
+	}
+
+	jsonStr := string(data)
+
+	// Empty fields with omitempty should not appear in JSON
+	if strings.Contains(jsonStr, "activeProfile") {
+		t.Errorf("expected 'activeProfile' to be omitted when empty, but found in JSON: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, "adminToken") {
+		t.Errorf("expected 'adminToken' to be omitted when empty, but found in JSON: %s", jsonStr)
+	}
+}
+
+func TestInstanceMetadata_ProfileFields_JSONUnmarshal(t *testing.T) {
+	jsonStr := `{
+		"id": "inst_test_unmarshal",
+		"port": 9090,
+		"pid": 54321,
+		"configType": "global",
+		"configPath": "/global/config.json",
+		"startTime": "2024-02-17T14:30:00Z",
+		"activeProfile": "premium",
+		"adminToken": "secret-token-123"
+	}`
+
+	var meta InstanceMetadata
+	if err := json.Unmarshal([]byte(jsonStr), &meta); err != nil {
+		t.Fatalf("failed to unmarshal metadata: %v", err)
+	}
+
+	if meta.ActiveProfile != "premium" {
+		t.Errorf("expected ActiveProfile 'premium', got '%s'", meta.ActiveProfile)
+	}
+	if meta.AdminToken != "secret-token-123" {
+		t.Errorf("expected AdminToken 'secret-token-123', got '%s'", meta.AdminToken)
+	}
+}
+
+func TestUpdateActiveProfile_Integration(t *testing.T) {
+	// Save original HOME
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+
+	// Create initial instance with a profile
+	meta := &InstanceMetadata{
+		ID:            "inst_update_profile",
+		Port:          8081,
+		PID:           12345,
+		ConfigType:    "project",
+		StartTime:     time.Now(),
+		ActiveProfile: "initial-profile",
+	}
+
+	if err := SaveInstance(meta); err != nil {
+		t.Fatalf("failed to save initial instance: %v", err)
+	}
+
+	// Update active profile
+	err := UpdateActiveProfile("inst_update_profile", "new-profile")
+	if err != nil {
+		t.Fatalf("UpdateActiveProfile failed: %v", err)
+	}
+
+	// Load and verify updated profile
+	loaded, err := LoadInstance("inst_update_profile")
+	if err != nil {
+		t.Fatalf("failed to load updated instance: %v", err)
+	}
+
+	if loaded.ActiveProfile != "new-profile" {
+		t.Errorf("expected ActiveProfile 'new-profile', got '%s'", loaded.ActiveProfile)
+	}
+}
+
+func TestUpdateActiveProfile_NotFound(t *testing.T) {
+	// Save original HOME
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+
+	// Try to update a non-existent instance
+	err := UpdateActiveProfile("inst_nonexistent", "some-profile")
+	if err == nil {
+		t.Error("expected error when updating non-existent instance")
+	}
+}
+
+func TestInstanceMetadata_SaveWithProfileFields_Integration(t *testing.T) {
+	// Save original HOME
+	origHome := os.Getenv("HOME")
+	defer os.Setenv("HOME", origHome)
+
+	tmpDir := t.TempDir()
+	os.Setenv("HOME", tmpDir)
+
+	meta := &InstanceMetadata{
+		ID:            "inst_full_profile",
+		Port:          8081,
+		PID:           12345,
+		ConfigType:    "project",
+		ConfigPath:    "/test/config.json",
+		ProjectRoot:   "/test/project",
+		StartTime:     time.Now(),
+		ActiveProfile: "production",
+		AdminToken:    "secure-admin-token",
+	}
+
+	// Save instance with profile fields
+	if err := SaveInstance(meta); err != nil {
+		t.Fatalf("SaveInstance failed: %v", err)
+	}
+
+	// Load and verify all fields including profile fields
+	loaded, err := LoadInstance("inst_full_profile")
+	if err != nil {
+		t.Fatalf("LoadInstance failed: %v", err)
+	}
+
+	if loaded.ID != meta.ID {
+		t.Errorf("expected ID %s, got %s", meta.ID, loaded.ID)
+	}
+	if loaded.Port != meta.Port {
+		t.Errorf("expected Port %d, got %d", meta.Port, loaded.Port)
+	}
+	if loaded.ActiveProfile != meta.ActiveProfile {
+		t.Errorf("expected ActiveProfile %s, got %s", meta.ActiveProfile, loaded.ActiveProfile)
+	}
+	if loaded.AdminToken != meta.AdminToken {
+		t.Errorf("expected AdminToken %s, got %s", meta.AdminToken, loaded.AdminToken)
+	}
+}

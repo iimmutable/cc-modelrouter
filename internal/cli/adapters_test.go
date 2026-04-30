@@ -22,14 +22,16 @@ func TestNewRouterAdapter(t *testing.T) {
 }
 
 func TestRouterAdapter_DetectRoute(t *testing.T) {
-	called := false
-	var receivedReq router.RouteRequest
-
-	engine := &router.Engine{}
+	cfg := &config.Config{
+		Router: config.RouterConfig{
+			Routes: map[string]string{
+				"default": "provider:model",
+			},
+		},
+	}
+	engine := router.NewEngine(cfg)
 	adapter := NewRouterAdapter(engine)
 
-	// Create a mock engine that captures the request
-	// Since we can't easily mock the method, we'll just verify delegation
 	req := router.RouteRequest{
 		IsBackground: false,
 		ThinkLevel:   router.ThinkNone,
@@ -40,20 +42,13 @@ func TestRouterAdapter_DetectRoute(t *testing.T) {
 
 	// Just call the method - it should delegate to engine.DetectRoute
 	route := adapter.DetectRoute(req)
-	called = true // We got here, so it delegated
 
-	if !called {
-		t.Error("expected DetectRoute to be called")
-	}
 	if route == "" {
 		t.Error("expected a route to be returned")
 	}
 
-	// Store the request for verification
-	receivedReq = req
-
-	if receivedReq.IsBackground != req.IsBackground {
-		t.Error("request not passed correctly")
+	if route != "default" {
+		t.Errorf("expected route 'default', got '%s'", route)
 	}
 }
 
@@ -129,5 +124,40 @@ func TestRegistryAdapter_Get_ReturnsTransformer(t *testing.T) {
 
 	if result.Name() != "anthropic" {
 		t.Errorf("expected name 'anthropic', got '%s'", result.Name())
+	}
+}
+
+func TestRouterAdapter_SetActiveProfile(t *testing.T) {
+	cfg := &config.Config{
+		Router: config.RouterConfig{
+			Profiles: map[string]config.ProfileConfig{
+				"fast": {
+					Name:   "Fast",
+					Routes: map[string]string{"default": "p:fast"},
+				},
+				"quality": {
+					Name:   "Quality",
+					Routes: map[string]string{"default": "p:quality"},
+				},
+			},
+		},
+	}
+	engine := router.NewEngine(cfg)
+	engine.SetActiveProfile("fast")
+	adapter := NewRouterAdapter(engine)
+
+	// Verify initial profile
+	targets := adapter.GetTargets("default")
+	if len(targets) == 0 || targets[0].Model != "fast" {
+		t.Errorf("expected fast model, got %v", targets)
+	}
+
+	// Switch profile via adapter
+	adapter.SetActiveProfile("quality")
+
+	// Verify profile was switched on the engine
+	targets = adapter.GetTargets("default")
+	if len(targets) == 0 || targets[0].Model != "quality" {
+		t.Errorf("expected quality model after switch, got %v", targets)
 	}
 }

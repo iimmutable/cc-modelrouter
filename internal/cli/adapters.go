@@ -26,6 +26,11 @@ func (a *RouterAdapter) GetTargets(routeName string) []config.RouteTarget {
 	return a.engine.GetTargets(routeName)
 }
 
+// SetActiveProfile implements proxy.Router.
+func (a *RouterAdapter) SetActiveProfile(profile string) {
+	a.engine.SetActiveProfile(profile)
+}
+
 // RegistryAdapter adapts transformer.Registry to proxy.TransformerRegistry interface.
 type RegistryAdapter struct {
 	registry *transformer.Registry

@@ -32,6 +32,7 @@ Available Commands:
   config  Show or manage configuration
   logs    Show instance logs
   monitor Live usage monitor with terminal UI
+  profile Manage route profiles
 
 Use "ccrouter [command] --help" for more information about a command.`,
 		Version: Version,
@@ -46,6 +47,7 @@ Use "ccrouter [command] --help" for more information about a command.`,
 	cmd.AddCommand(NewConfigCommand())
 	cmd.AddCommand(NewLogsCommand())
 	cmd.AddCommand(NewMonitorCommand())
+	cmd.AddCommand(NewProfileCommand())
 
 	return cmd
 }

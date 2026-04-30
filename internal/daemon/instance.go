@@ -4,6 +4,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,13 +14,15 @@ import (
 
 // InstanceMetadata represents metadata for a running instance.
 type InstanceMetadata struct {
-	ID          string    `json:"id"`
-	Port        int       `json:"port"`
-	PID         int       `json:"pid"`
-	ConfigType  string    `json:"configType"`
-	ConfigPath  string    `json:"configPath"`
-	ProjectRoot string    `json:"projectRoot"`
-	StartTime   time.Time `json:"startTime"`
+	ID           string    `json:"id"`
+	Port         int       `json:"port"`
+	PID          int       `json:"pid"`
+	ConfigType   string    `json:"configType"`
+	ConfigPath   string    `json:"configPath"`
+	ProjectRoot  string    `json:"projectRoot"`
+	StartTime    time.Time `json:"startTime"`
+	ActiveProfile string   `json:"activeProfile,omitempty"` // Current active profile name
+	AdminToken    string   `json:"adminToken,omitempty"`    // Admin API token for runtime management
 }
 
 // GenerateInstanceID generates a unique instance ID.
@@ -135,4 +138,26 @@ func IsRunning(meta *InstanceMetadata) bool {
 	// On Unix, FindProcess always succeeds, so we need to signal
 	err = proc.Signal(syscall.Signal(0))
 	return err == nil
+}
+
+// UpdateActiveProfile updates the active profile for an instance.
+func UpdateActiveProfile(id string, profile string) error {
+	meta, err := LoadInstance(id)
+	if err != nil {
+		return err
+	}
+	meta.ActiveProfile = profile
+	return SaveInstance(meta)
+}
+
+// GenerateAdminToken generates a random admin token for secure API access.
+func GenerateAdminToken() string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	const length = 32
+
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
 }

@@ -52,6 +52,14 @@ func deepCopyRequest(req *anthropic.Request) (*anthropic.Request, error) {
 - JSON creates truly independent copies of all nested structures
 - Performance cost is negligible relative to HTTP round-trip
 
+**Benchmark: JSON vs gob (commit `fb4c47f`):**
+- Gob encoding is ~30% slower than JSON for deep copying `anthropic.Request`
+- JSON is the production choice despite gob being "native Go" serialization
+- Both produce correct deep copies — verified with independence tests (mutate copy, check original unchanged)
+- Gob preserves raw Go struct fields; JSON uses custom `MarshalJSON` (e.g., merges consecutive text blocks)
+- Benchmark fixture: 10-message request with thinking blocks, tools, tool_choice, metadata, system field
+- See `internal/proxy/deepcopy_test.go` for benchmarks and correctness tests
+
 ### Solution 2: GetBody for Retry Support
 
 Set `GetBody` function on HTTP requests to allow re-reading the body:

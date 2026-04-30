@@ -17,6 +17,8 @@ const (
 	ScreenAddProvider2
 	ScreenRoutes
 	ScreenEditRoute
+	ScreenCreateProfile
+	ScreenEditProfile
 	ScreenServer
 	ScreenLogging
 	ScreenViewConfig
@@ -113,6 +115,21 @@ type WizardState struct {
 	// Route name dropdown state (Edit Route screen)
 	ShowRouteNameDropdown   bool
 	RouteNameDropdownCursor int
+
+	// Profile tabs state (Routes screen)
+	ProfileTabIndex    int      // Current tab index (0 = legacy, 1 = default, 2 = ...)
+	ProfileTabKeys     []string // Tab keys in order: ["legacy", "default", "cost-opt", ...]
+
+	// Profile edit state (when creating/editing profile metadata)
+	EditProfileKey       string // Profile key being edited (empty when creating new)
+	EditProfileName      string // Profile display name (for rename/create)
+	EditProfileDesc      string // Profile description
+	ShowProfileEditModal bool   // Show profile name/description edit modal (deprecated - use ScreenEditProfile instead)
+	IsCreatingProfile    bool   // true when creating new profile, false when editing existing
+
+	// Migration state (when creating first profile with legacy routes)
+	ShowMigrationModal bool // Show migration confirmation modal
+	MigrationChoice    int  // 0 = copy routes, 1 = start empty
 }
 
 // ProviderPreset defines preset provider configurations.
@@ -231,10 +248,24 @@ func deepCopyConfig(cfg *config.Config) *config.Config {
 	for k, v := range cfg.Router.Routes {
 		routes[k] = v
 	}
+	// Deep copy profiles from Router.Profiles
+	profiles := make(map[string]config.ProfileConfig, len(cfg.Router.Profiles))
+	for k, v := range cfg.Router.Profiles {
+		profileRoutes := make(map[string]string, len(v.Routes))
+		for rk, rv := range v.Routes {
+			profileRoutes[rk] = rv
+		}
+		profiles[k] = config.ProfileConfig{
+			Name:        v.Name,
+			Description: v.Description,
+			Routes:      profileRoutes,
+		}
+	}
 	return &config.Config{
 		Server: cfg.Server,
 		Router: config.RouterConfig{
 			Routes:     routes,
+			Profiles:   profiles, // Profiles now in RouterConfig
 			MaxRetries: cfg.Router.MaxRetries,
 			RetryDelay: cfg.Router.RetryDelay,
 		},
@@ -319,6 +350,27 @@ func configsEqual(a, b *config.Config) bool {
 		a.Logging.Destination != b.Logging.Destination ||
 		a.Logging.FilePath != b.Logging.FilePath {
 		return false
+	}
+	// Compare profiles from Router.Profiles
+	if len(a.Router.Profiles) != len(b.Router.Profiles) {
+		return false
+	}
+	for k, av := range a.Router.Profiles {
+		bv, ok := b.Router.Profiles[k]
+		if !ok {
+			return false
+		}
+		if av.Name != bv.Name || av.Description != bv.Description {
+			return false
+		}
+		if len(av.Routes) != len(bv.Routes) {
+			return false
+		}
+		for rk, rv := range av.Routes {
+			if bv.Routes[rk] != rv {
+				return false
+			}
+		}
 	}
 	return true
 }

@@ -7,8 +7,15 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
+
+// sseBufferPool pools scanner buffers to reduce per-request allocations.
+// Each concurrent streaming request borrows a buffer and returns it after completion.
+var sseBufferPool = sync.Pool{
+	New: func() any { return make([]byte, 0, 64*1024) },
+}
 
 // SSEWriter handles Server-Sent Events writing.
 type SSEWriter struct {
@@ -66,20 +73,33 @@ func ParseSSEEvent(line string) (event string, data []byte, err error) {
 
 // SSEScanner scans SSE events from a reader.
 type SSEScanner struct {
-	scanner *bufio.Scanner
-	event   string
-	data    []byte
-	err     error
+	scanner  *bufio.Scanner
+	event    string
+	data     []byte
+	err      error
+	poolBuf  []byte // tracks the pooled buffer for return on Close
 }
 
 // NewSSEScanner creates a new SSE scanner.
 func NewSSEScanner(r io.Reader) *SSEScanner {
 	scanner := bufio.NewScanner(r)
 	// Increase max token size from default 64KB (bufio.MaxScanTokenSize) to 1MB
-	// This ensures large SSE payloads (e.g., long AI responses) are handled correctly
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// This ensures large SSE payloads (e.g., long AI responses) are handled correctly.
+	// Buffer is pooled to reduce per-request allocations.
+	buf := sseBufferPool.Get().([]byte)
+	scanner.Buffer(buf, 1024*1024)
 	return &SSEScanner{
 		scanner: scanner,
+		poolBuf: buf,
+	}
+}
+
+// Close returns the scanner's buffer to the pool.
+// Must be called when the scanner is no longer needed.
+func (s *SSEScanner) Close() {
+	if s.poolBuf != nil {
+		sseBufferPool.Put(s.poolBuf[:0])
+		s.poolBuf = nil
 	}
 }
 

@@ -186,6 +186,10 @@ func (m *WizardModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyTab:
 		if max := m.getMaxFields(); max > 0 {
 			m.focusedField = (m.focusedField + 1) % max
+			// Skip Name field (0) when editing "default" profile — it's locked
+			if m.state.CurrentScreen == ScreenEditProfile && m.state.EditProfileKey == "default" && m.focusedField == 0 {
+				m.focusedField = 1
+			}
 			// Hide dropdowns when tabbing away from their fields
 			if m.state.CurrentScreen == ScreenAddProvider1 {
 				if m.focusedField != 0 {
@@ -219,6 +223,10 @@ func (m *WizardModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.state.CurrentScreen {
 	case ScreenAddProvider1, ScreenAddProvider2:
 		return m.handleFormInput(msg)
+	case ScreenCreateProfile:
+		return m.handleCreateProfileInput(msg)
+	case ScreenEditProfile:
+		return m.handleEditProfileInput(msg)
 	case ScreenServer:
 		return m.handleServerInput(msg)
 	case ScreenLogging:
@@ -279,7 +287,82 @@ func (m *WizardModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleProvidersDelete()
 		}
 	case ScreenRoutes:
-		if msg.String() == "a" {
+		// Handle profile edit modal
+		if m.state.ShowProfileEditModal {
+			if msg.String() == "tab" {
+				m.focusedField = (m.focusedField + 1) % 3
+				return m, nil
+			}
+			if msg.String() == "enter" {
+				return m.handleProfileEditSave()
+			}
+			if msg.String() == "esc" {
+				m.state.ShowProfileEditModal = false
+				m.state.IsCreatingProfile = false
+				m.state.EditProfileName = ""
+				m.state.EditProfileDesc = ""
+				m.focusedField = 0
+				return m, nil
+			}
+			// Handle character input for name/description fields
+			if m.focusedField == 0 || m.focusedField == 1 {
+				if msg.String() == "backspace" || msg.String() == "delete" {
+					if m.focusedField == 0 && len(m.state.EditProfileName) > 0 {
+						m.state.EditProfileName = m.state.EditProfileName[:len(m.state.EditProfileName)-1]
+					} else if m.focusedField == 1 && len(m.state.EditProfileDesc) > 0 {
+						m.state.EditProfileDesc = m.state.EditProfileDesc[:len(m.state.EditProfileDesc)-1]
+					}
+					return m, nil
+				}
+				// Add character
+				if len(msg.String()) == 1 && msg.String() >= " " {
+					if m.focusedField == 0 {
+						m.state.EditProfileName += msg.String()
+					} else {
+						m.state.EditProfileDesc += msg.String()
+					}
+					return m, nil
+				}
+			}
+			return m, nil
+		}
+
+		// Handle migration modal
+		if m.state.ShowMigrationModal {
+			if msg.String() == "left" || msg.String() == "h" {
+				m.state.MigrationChoice = (m.state.MigrationChoice - 1 + 3) % 3
+				return m, nil
+			}
+			if msg.String() == "right" || msg.String() == "l" {
+				m.state.MigrationChoice = (m.state.MigrationChoice + 1) % 3
+				return m, nil
+			}
+			if msg.String() == "enter" {
+				return m.handleMigrationChoice()
+			}
+			if msg.String() == "esc" {
+				m.state.ShowMigrationModal = false
+				return m, nil
+			}
+			return m, nil
+		}
+
+		// Tab navigation
+		if msg.String() == "left" || msg.String() == "h" {
+			totalTabs := len(m.state.ProfileTabKeys) + 1 // +1 for [+] tab
+			m.state.ProfileTabIndex = (m.state.ProfileTabIndex - 1 + totalTabs) % totalTabs
+			m.state.RouteCursor = 0
+			return m, nil
+		}
+		if msg.String() == "right" || msg.String() == "l" {
+			totalTabs := len(m.state.ProfileTabKeys) + 1
+			m.state.ProfileTabIndex = (m.state.ProfileTabIndex + 1) % totalTabs
+			m.state.RouteCursor = 0
+			return m, nil
+		}
+
+		// Add route
+		if msg.String() == "a" && !m.isOnAddTab() {
 			m.state.EditRouteName = ""
 			m.state.EditRouteChain = nil
 			m.state.EditRouteChainCursor = 0
@@ -292,8 +375,50 @@ func (m *WizardModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.state.CurrentScreen = ScreenEditRoute
 			return m, nil
 		}
-		if msg.String() == "backspace" || msg.String() == "delete" || msg.String() == "del" {
+
+		// Delete route
+		if (msg.String() == "backspace" || msg.String() == "delete" || msg.String() == "del") && !m.isOnAddTab() {
 			return m.handleRoutesDelete()
+		}
+
+		// Edit profile (P key) - switch to full-screen edit view
+		if msg.String() == "P" && m.state.ProfileTabIndex > 0 {
+			profileKey := m.getCurrentProfileKey()
+			if profile, ok := m.state.Config.Router.Profiles[profileKey]; ok {
+				m.state.EditProfileKey = profileKey
+				m.state.EditProfileName = profile.Name
+				m.state.EditProfileDesc = profile.Description
+				m.state.IsCreatingProfile = false
+				m.state.ShowProfileEditModal = false
+				m.state.ErrorMessage = ""
+				m.state.CurrentScreen = ScreenEditProfile
+				if profileKey == "default" {
+					m.focusedField = 1 // Skip locked Name field
+				} else {
+					m.focusedField = 0
+				}
+			}
+			return m, nil
+		}
+
+		// Delete profile (X key)
+		if msg.String() == "X" && m.state.ProfileTabIndex > 0 {
+			profileKey := m.getCurrentProfileKey()
+			if profileKey == "default" {
+				m.state.ErrorMessage = "Cannot delete 'default' launch profile"
+				return m, nil
+			}
+			m.state.ShowConfirm = true
+			m.state.ConfirmCursor = 1 // Default to No
+			m.state.ConfirmMessage = fmt.Sprintf("Delete profile \"%s\"? This cannot be undone.", profileKey)
+			m.state.ConfirmAction = func() bool {
+				errMsg := m.deleteCurrentProfile()
+				if errMsg != "" {
+					m.state.ErrorMessage = errMsg
+				}
+				return false
+			}
+			return m, nil
 		}
 	}
 
@@ -410,9 +535,44 @@ func (m *WizardModel) handleEscape() (tea.Model, tea.Cmd) {
 		m.state.CurrentScreen = ScreenMainMenu
 
 	case ScreenProviders, ScreenRoutes, ScreenViewConfig:
+		// Handle profile edit modal first
+		if m.state.ShowProfileEditModal {
+			m.state.ShowProfileEditModal = false
+			m.state.IsCreatingProfile = false
+			m.state.EditProfileName = ""
+			m.state.EditProfileDesc = ""
+			m.focusedField = 0
+			return m, nil
+		}
+		// Handle migration modal
+		if m.state.ShowMigrationModal {
+			m.state.ShowMigrationModal = false
+			return m, nil
+		}
 		m.state.PortStatus = ""
 		m.state.ProviderCursor = m.state.MainMenuCursor
 		m.state.CurrentScreen = ScreenMainMenu
+
+	case ScreenCreateProfile:
+		// Cancel profile creation, return to Routes screen
+		m.state.IsCreatingProfile = false
+		m.state.EditProfileName = ""
+		m.state.EditProfileDesc = ""
+		m.state.ErrorMessage = ""
+		m.focusedField = 0
+		m.state.CurrentScreen = ScreenRoutes
+		m.state.ProfileTabIndex = 0 // Return to first profile tab
+		return m, nil
+
+	case ScreenEditProfile:
+		// Cancel profile editing, return to Routes screen
+		m.state.EditProfileKey = ""
+		m.state.EditProfileName = ""
+		m.state.EditProfileDesc = ""
+		m.state.ErrorMessage = ""
+		m.focusedField = 0
+		m.state.CurrentScreen = ScreenRoutes
+		return m, nil
 
 	case ScreenEditRoute:
 		if m.state.ShowRouteNameDropdown {
@@ -473,6 +633,7 @@ func (m *WizardModel) handleEscape() (tea.Model, tea.Cmd) {
 				m.state.HasChanges = true
 			}
 		}
+		m.initProfileTabs()
 		m.state.CurrentScreen = ScreenRoutes
 
 	case ScreenTestConnection:
@@ -611,7 +772,12 @@ func (m *WizardModel) handleNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case ScreenRoutes:
-		routeCount := len(m.state.Config.Router.Routes)
+		// Don't navigate routes when on [+] tab
+		if m.isOnAddTab() {
+			return m, nil
+		}
+		routes := m.getRouteList()
+		routeCount := len(routes)
 		if routeCount > 0 {
 			if isUp {
 				m.state.RouteCursor = (m.state.RouteCursor - 1 + routeCount) % routeCount
@@ -645,7 +811,21 @@ func (m *WizardModel) handleEnter() (tea.Model, tea.Cmd) {
 		return m.handleProvidersEnter()
 
 	case ScreenRoutes:
+		// Handle profile edit modal first
+		if m.state.ShowProfileEditModal {
+			return m.handleProfileEditSave()
+		}
+		// Handle migration modal
+		if m.state.ShowMigrationModal {
+			return m.handleMigrationChoice()
+		}
 		return m.handleRoutesEnter()
+
+	case ScreenCreateProfile:
+		return m.handleCreateProfileEnter()
+
+	case ScreenEditProfile:
+		return m.handleEditProfileEnter()
 
 	case ScreenServer:
 		return m.handleServerSave()
@@ -765,6 +945,7 @@ func (m *WizardModel) handleMainMenuEnter() (tea.Model, tea.Cmd) {
 		m.state.CurrentScreen = ScreenProviders
 	case 1: // Routes
 		m.state.RouteCursor = 0
+		m.initProfileTabs()
 		m.state.CurrentScreen = ScreenRoutes
 	case 2: // Server
 		m.state.ServerHost = m.state.Config.Server.Host
@@ -906,11 +1087,34 @@ func (m *WizardModel) handleProvidersDelete() (tea.Model, tea.Cmd) {
 }
 
 func (m *WizardModel) handleRoutesEnter() (tea.Model, tea.Cmd) {
+	// Handle [+] tab - create new profile
+	if m.isOnAddTab() {
+		// Check if we need to show migration modal
+		if m.hasLegacyRoutes() && !m.hasProfiles() {
+			m.state.ShowMigrationModal = true
+			m.state.MigrationChoice = 0 // Default to copy routes
+			m.state.EditProfileName = "Default"
+			m.state.EditProfileDesc = "Launch profile for router"
+			m.state.IsCreatingProfile = true
+			return m, nil
+		}
+		// Navigate to full-screen profile creation screen
+		m.state.EditProfileName = ""
+		m.state.EditProfileDesc = ""
+		m.state.IsCreatingProfile = true
+		m.state.ShowProfileEditModal = false // Ensure modal flag is off
+		m.state.CurrentScreen = ScreenCreateProfile
+		m.focusedField = 0
+		return m, nil
+	}
+
+	// Edit existing route
 	routes := m.getRouteList()
+	currentRoutes := m.getCurrentRoutes()
 	if m.state.RouteCursor < len(routes) {
 		routeName := routes[m.state.RouteCursor]
 		m.state.EditRouteName = routeName
-		m.state.EditRouteChain = config.ParseRoute(m.state.Config.Router.Routes[routeName])
+		m.state.EditRouteChain = config.ParseRoute(currentRoutes[routeName])
 		m.state.EditRouteChainCursor = 0
 		m.state.ShowDropdown = false
 		m.state.DropdownCursor = 0
@@ -924,6 +1128,10 @@ func (m *WizardModel) handleRoutesEnter() (tea.Model, tea.Cmd) {
 }
 
 func (m *WizardModel) handleRoutesDelete() (tea.Model, tea.Cmd) {
+	if m.isOnAddTab() {
+		return m, nil // Can't delete from [+] tab
+	}
+
 	routes := m.getRouteList()
 	if len(routes) == 0 || m.state.RouteCursor >= len(routes) {
 		return m, nil
@@ -934,7 +1142,9 @@ func (m *WizardModel) handleRoutesDelete() (tea.Model, tea.Cmd) {
 	m.state.ConfirmCursor = 1 // Default to No (safer)
 	m.state.ConfirmMessage = fmt.Sprintf("Delete route \"%s\"? This cannot be undone.", routeName)
 	m.state.ConfirmAction = func() bool {
-		delete(m.state.Config.Router.Routes, routeName)
+		currentRoutes := m.getCurrentRoutes()
+		delete(currentRoutes, routeName)
+		m.saveCurrentRoutes(currentRoutes)
 
 		// Clamp cursor
 		remaining := m.getRouteList()
@@ -942,9 +1152,75 @@ func (m *WizardModel) handleRoutesDelete() (tea.Model, tea.Cmd) {
 			m.state.RouteCursor = len(remaining) - 1
 		}
 
-		m.state.HasChanges = true
 		return false
 	}
+	return m, nil
+}
+
+func (m *WizardModel) handleProfileEditSave() (tea.Model, tea.Cmd) {
+	name := strings.TrimSpace(m.state.EditProfileName)
+	if name == "" {
+		m.state.ErrorMessage = "Profile name is required"
+		return m, nil
+	}
+
+	if m.state.IsCreatingProfile {
+		// Create new profile
+		key := m.createNewProfile(name, m.state.EditProfileDesc)
+		// Reinitialize tabs and switch to new profile
+		m.initProfileTabs()
+		// Find the new profile tab
+		for i, k := range m.state.ProfileTabKeys {
+			if k == key {
+				m.state.ProfileTabIndex = i
+				break
+			}
+		}
+	} else {
+		// Update existing profile
+		profileKey := m.getCurrentProfileKey()
+		if profileKey != "" {
+			profile := m.state.Config.Router.Profiles[profileKey]
+			profile.Name = name
+			profile.Description = m.state.EditProfileDesc
+			m.state.Config.Router.Profiles[profileKey] = profile
+			m.state.HasChanges = true
+		}
+	}
+
+	// Close modal
+	m.state.ShowProfileEditModal = false
+	m.state.IsCreatingProfile = false
+	m.state.EditProfileName = ""
+	m.state.EditProfileDesc = ""
+	m.focusedField = 0
+	m.state.ErrorMessage = ""
+	return m, nil
+}
+
+func (m *WizardModel) handleMigrationChoice() (tea.Model, tea.Cmd) {
+	if m.state.MigrationChoice == 2 {
+		// Cancel
+		m.state.ShowMigrationModal = false
+		return m, nil
+	}
+
+	// Create default profile
+	copyRoutes := m.state.MigrationChoice == 0
+	m.createDefaultProfile(copyRoutes)
+
+	// Reinitialize tabs and switch to default profile
+	m.initProfileTabs()
+	for i, k := range m.state.ProfileTabKeys {
+		if k == "default" {
+			m.state.ProfileTabIndex = i
+			break
+		}
+	}
+
+	// Close modal
+	m.state.ShowMigrationModal = false
+	m.state.RouteCursor = 0
 	return m, nil
 }
 
@@ -1167,8 +1443,13 @@ func (m *WizardModel) saveRouteFromEdit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.state.Config.Router.Routes[routeName] = strings.Join(chainParts, ";")
-	m.state.HasChanges = true
+	chainStr := strings.Join(chainParts, ";")
+
+	// Save to correct location based on current tab
+	currentRoutes := m.getCurrentRoutes()
+	currentRoutes[routeName] = chainStr
+	m.saveCurrentRoutes(currentRoutes)
+
 	m.state.CurrentScreen = ScreenRoutes
 	m.state.ErrorMessage = ""
 	return m, nil
@@ -1327,6 +1608,10 @@ func (m *WizardModel) getMaxFields() int {
 		return 3
 	case ScreenEditRoute:
 		return 2
+	case ScreenCreateProfile:
+		return 4 // Name, Description, Create button, Cancel button
+	case ScreenEditProfile:
+		return 4 // Name, Description, Save button, Cancel button
 	default:
 		return 0
 	}
@@ -1344,12 +1629,13 @@ func (m *WizardModel) getProviderList() []string {
 }
 
 func (m *WizardModel) getRouteList() []string {
-	routes := make([]string, 0, len(m.state.Config.Router.Routes))
-	for name := range m.state.Config.Router.Routes {
-		routes = append(routes, name)
+	routes := m.getCurrentRoutes()
+	routeNames := make([]string, 0, len(routes))
+	for name := range routes {
+		routeNames = append(routeNames, name)
 	}
-	sort.Strings(routes)
-	return routes
+	sort.Strings(routeNames)
+	return routeNames
 }
 
 // getChainProviderList returns configured provider names for the chain dropdown.
@@ -1459,6 +1745,225 @@ func (m *WizardModel) renderChainStyled(chain string, width int, selected bool) 
 	return style.Width(width).Render(truncatedText)
 }
 
+// initProfileTabs initializes the profile tab keys when entering Routes screen.
+// Legacy routes are auto-migrated to a "default" profile when no profiles exist.
+func (m *WizardModel) initProfileTabs() {
+	m.state.ProfileTabKeys = []string{}
+
+	// Ensure Profiles map is initialized
+	if m.state.Config.Router.Profiles == nil {
+		m.state.Config.Router.Profiles = make(map[string]config.ProfileConfig)
+	}
+
+	// Auto-migrate legacy routes to default profile when no profiles exist
+	if len(m.state.Config.Router.Profiles) == 0 && len(m.state.Config.Router.Routes) > 0 {
+		// Create default profile with legacy routes
+		routes := make(map[string]string)
+		for k, v := range m.state.Config.Router.Routes {
+			routes[k] = v
+		}
+		m.state.Config.Router.Profiles["default"] = config.ProfileConfig{
+			Name:        "Default",
+			Description: "Auto-migrated from legacy routes",
+			Routes:      routes,
+		}
+		// Clear legacy routes (migration complete)
+		m.state.Config.Router.Routes = make(map[string]string)
+		m.state.HasChanges = true
+	}
+
+	// Add all profile keys
+	for key := range m.state.Config.Router.Profiles {
+		m.state.ProfileTabKeys = append(m.state.ProfileTabKeys, key)
+	}
+	sort.Strings(m.state.ProfileTabKeys)
+
+	// Pin "default" to first position
+	for i, k := range m.state.ProfileTabKeys {
+		if k == "default" {
+			m.state.ProfileTabKeys = append(
+				m.state.ProfileTabKeys[:i],
+				m.state.ProfileTabKeys[i+1:]...,
+			)
+			m.state.ProfileTabKeys = append([]string{"default"}, m.state.ProfileTabKeys...)
+			break
+		}
+	}
+
+	// Default to "default" profile (always at index 0 if it exists)
+	m.state.ProfileTabIndex = 0
+}
+
+// getCurrentRoutes returns the routes map for the currently selected tab.
+// If profiles exist, always use profile routes. Otherwise use legacy routes.
+func (m *WizardModel) getCurrentRoutes() map[string]string {
+	// If profiles exist, always use profile routes
+	if m.hasProfiles() {
+		key := m.getCurrentProfileKey()
+		if profile, ok := m.state.Config.Router.Profiles[key]; ok {
+			return profile.Routes
+		}
+		// Fallback to default profile
+		if profile, ok := m.state.Config.Router.Profiles["default"]; ok {
+			return profile.Routes
+		}
+	}
+	// No profiles - use legacy routes
+	return m.state.Config.Router.Routes
+}
+
+// saveCurrentRoutes saves routes to the correct location based on current tab.
+// If profiles exist, always save to profile. Otherwise save to legacy routes.
+func (m *WizardModel) saveCurrentRoutes(routes map[string]string) {
+	// If profiles exist, always save to profile
+	if m.hasProfiles() {
+		key := m.getCurrentProfileKey()
+		if profile, ok := m.state.Config.Router.Profiles[key]; ok {
+			profile.Routes = routes
+			m.state.Config.Router.Profiles[key] = profile
+		} else {
+			// Fallback to default profile
+			profile := m.state.Config.Router.Profiles["default"]
+			profile.Routes = routes
+			m.state.Config.Router.Profiles["default"] = profile
+		}
+	} else {
+		// No profiles - save to legacy routes
+		m.state.Config.Router.Routes = routes
+	}
+	m.state.HasChanges = true
+}
+
+// getCurrentProfileKey returns the profile key for the current tab, or "" for legacy tab.
+// When profiles exist, returns the profile key from the tab index.
+func (m *WizardModel) getCurrentProfileKey() string {
+	// Legacy mode: no profiles exist
+	if !m.hasProfiles() {
+		return "" // indicates legacy routes
+	}
+	// Profiles exist - get key from tab
+	if m.state.ProfileTabIndex < len(m.state.ProfileTabKeys) {
+		return m.state.ProfileTabKeys[m.state.ProfileTabIndex]
+	}
+	return "default" // fallback
+}
+
+// isDefaultProfile returns true if the current tab is the "default" profile.
+func (m *WizardModel) isDefaultProfile() bool {
+	return m.getCurrentProfileKey() == "default"
+}
+
+// isOnAddTab returns true if the cursor is on the [+] add profile tab.
+func (m *WizardModel) isOnAddTab() bool {
+	return m.state.ProfileTabIndex == len(m.state.ProfileTabKeys)
+}
+
+// generateProfileKey generates a profile key from a display name.
+// Converts to lowercase, replaces spaces with hyphens, removes special chars.
+func generateProfileKey(name string) string {
+	// Convert to lowercase
+	key := strings.ToLower(name)
+	// Replace spaces with hyphens
+	key = strings.ReplaceAll(key, " ", "-")
+	// Remove special characters (keep alphanumeric and hyphens)
+	var result strings.Builder
+	for _, c := range key {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			result.WriteRune(c)
+		}
+	}
+	key = result.String()
+	// Remove consecutive hyphens
+	key = strings.Join(strings.FieldsFunc(key, func(c rune) bool { return c == '-' }), "-")
+	// Default to "default" if empty
+	if key == "" {
+		key = "default"
+	}
+	return key
+}
+
+// hasLegacyRoutes returns true if there are routes in Router.Routes.
+func (m *WizardModel) hasLegacyRoutes() bool {
+	return len(m.state.Config.Router.Routes) > 0
+}
+
+// hasProfiles returns true if any profiles exist.
+func (m *WizardModel) hasProfiles() bool {
+	return len(m.state.Config.Router.Profiles) > 0
+}
+
+// createDefaultProfile creates the "default" profile with optional route migration.
+// Always clears legacy routes when creating the profile to ensure clean migration.
+func (m *WizardModel) createDefaultProfile(copyRoutes bool) {
+	routes := make(map[string]string)
+	if copyRoutes {
+		// Copy legacy routes to profile
+		for k, v := range m.state.Config.Router.Routes {
+			routes[k] = v
+		}
+	}
+	// Always clear legacy routes when profiles are introduced
+	m.state.Config.Router.Routes = make(map[string]string)
+
+	m.state.Config.Router.Profiles["default"] = config.ProfileConfig{
+		Name:        "Default",
+		Description: "Launch profile for router",
+		Routes:      routes,
+	}
+	m.state.HasChanges = true
+}
+
+// createNewProfile creates a new profile with the given name and description.
+func (m *WizardModel) createNewProfile(name, description string) string {
+	key := generateProfileKey(name)
+	// If this is the first profile and key is "default", ensure we handle it correctly
+	if len(m.state.Config.Router.Profiles) == 0 && key == "default" {
+		m.createDefaultProfile(false)
+		return "default"
+	}
+	// Ensure key is unique
+	if _, exists := m.state.Config.Router.Profiles[key]; exists {
+		// Append number to make unique
+		i := 1
+		for {
+			newKey := fmt.Sprintf("%s-%d", key, i)
+			if _, exists := m.state.Config.Router.Profiles[newKey]; !exists {
+				key = newKey
+				break
+			}
+			i++
+		}
+	}
+	m.state.Config.Router.Profiles[key] = config.ProfileConfig{
+		Name:        name,
+		Description: description,
+		Routes:      make(map[string]string),
+	}
+	m.state.HasChanges = true
+	return key
+}
+
+// deleteCurrentProfile deletes the profile for the current tab.
+// Returns an error message if deletion is not allowed.
+func (m *WizardModel) deleteCurrentProfile() string {
+	profileKey := m.getCurrentProfileKey()
+	if profileKey == "" {
+		return "Cannot delete legacy routes tab"
+	}
+	if profileKey == "default" {
+		return "Cannot delete 'default' launch profile"
+	}
+	delete(m.state.Config.Router.Profiles, profileKey)
+	m.state.HasChanges = true
+	// Reinitialize tabs
+	m.initProfileTabs()
+	// Clamp to valid tab
+	if m.state.ProfileTabIndex >= len(m.state.ProfileTabKeys) {
+		m.state.ProfileTabIndex = len(m.state.ProfileTabKeys) - 1
+	}
+	return ""
+}
+
 func (m *WizardModel) resetAddProviderState() {
 	m.state.NewProviderName = ""
 	m.state.NewProviderBaseURL = ""
@@ -1513,6 +2018,10 @@ func (m *WizardModel) View() string {
 		return m.renderRoutes()
 	case ScreenEditRoute:
 		return m.renderEditRoute()
+	case ScreenCreateProfile:
+		return m.renderCreateProfile()
+	case ScreenEditProfile:
+		return m.renderEditProfile()
 	case ScreenServer:
 		return m.renderServer()
 	case ScreenLogging:
@@ -1528,6 +2037,26 @@ func (m *WizardModel) View() string {
 func (m *WizardModel) renderWithModal(content string) string {
 	if m.state.ShowConfirm {
 		modal := m.renderConfirmModal()
+		return lipgloss.Place(
+			m.width, m.height,
+			lipgloss.Center, lipgloss.Center,
+			modal,
+			lipgloss.WithWhitespaceBackground(PanelBackground),
+			lipgloss.WithWhitespaceChars(" "),
+		)
+	}
+	if m.state.ShowProfileEditModal {
+		modal := m.renderProfileEditModal()
+		return lipgloss.Place(
+			m.width, m.height,
+			lipgloss.Center, lipgloss.Center,
+			modal,
+			lipgloss.WithWhitespaceBackground(PanelBackground),
+			lipgloss.WithWhitespaceChars(" "),
+		)
+	}
+	if m.state.ShowMigrationModal {
+		modal := m.renderMigrationModal()
 		return lipgloss.Place(
 			m.width, m.height,
 			lipgloss.Center, lipgloss.Center,
@@ -2021,7 +2550,36 @@ func (m *WizardModel) renderAddProvider2Hints() string {
 
 // Routes screen rendering
 func (m *WizardModel) renderRoutes() string {
-	title := SectionHeaderStyle.Width(m.contentWidth()).Render("Routes")
+	// Determine current context for title
+	profileKey := m.getCurrentProfileKey()
+	contextText := ""
+	if profileKey == "" {
+		if m.hasProfiles() {
+			contextText = "Legacy Routes (fallback)"
+		}
+	} else if profileKey == "default" {
+		contextText = "default - launch profile"
+	} else {
+		if profile, ok := m.state.Config.Router.Profiles[profileKey]; ok {
+			contextText = profileKey + " - " + profile.Name
+		} else {
+			contextText = profileKey
+		}
+	}
+
+	// Title with context on the right
+	titleText := "Routes"
+	if contextText != "" {
+		titleSpacing := m.contentWidth() - len("Routes") - len(contextText) - 4
+		if titleSpacing > 0 {
+			titleText = "Routes" + strings.Repeat(" ", titleSpacing) + contextText
+		}
+	}
+	title := SectionHeaderStyle.Width(m.contentWidth()).Render(titleText)
+
+	// Tab bar
+	tabs := m.renderProfileTabs()
+	tabDivider := m.divider()
 
 	// Table header
 	headerRow := lipgloss.JoinHorizontal(
@@ -2030,11 +2588,13 @@ func (m *WizardModel) renderRoutes() string {
 		SectionHeaderStyle.Width(m.contentWidth() - 20).Render("Chain"),
 	)
 
+	// Route list from current tab
 	var routeLines []string
 	routes := m.getRouteList()
+	currentRoutes := m.getCurrentRoutes()
 
 	for i, name := range routes {
-		chain := m.state.Config.Router.Routes[name]
+		chain := currentRoutes[name]
 		selected := i == m.state.RouteCursor
 
 		var line string
@@ -2055,22 +2615,654 @@ func (m *WizardModel) renderRoutes() string {
 	}
 
 	if len(routes) == 0 {
-		routeLines = append(routeLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render("No routes configured"))
+		if m.isOnAddTab() {
+			routeLines = append(routeLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render("Press [Enter] to create new profile"))
+		} else {
+			routeLines = append(routeLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render("No routes configured"))
+		}
+	}
+
+	// Build hints based on context
+	var hints string
+	if m.isOnAddTab() {
+		hints = "[Enter] Create new profile   [←] Previous tab   [Esc] Back"
+	} else if m.state.ProfileTabIndex == 0 {
+		// Legacy tab
+		hints = "[↑/↓] Navigate   [Enter] Edit   [a] Add   [⌫] Delete   [←/→] Switch Tab   [Esc] Back"
+	} else {
+		// Profile tab
+		profileKey := m.getCurrentProfileKey()
+		if profileKey == "default" {
+			hints = "[↑/↓] Navigate   [Enter] Edit   [a] Add   [⌫] Delete   [P] Edit Profile   [←/→] Switch Tab   [Esc] Back"
+		} else {
+			hints = "[↑/↓] Navigate   [Enter] Edit   [a] Add   [⌫] Delete   [P] Edit Profile   [X] Delete Profile   [←/→] Switch Tab   [Esc] Back"
+		}
 	}
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.fullWidth(title),
 		m.blankLine(),
+		m.fullWidth(tabs),
+		m.fullWidth(tabDivider),
 		headerRow,
 		m.divider(),
 		lipgloss.JoinVertical(lipgloss.Left, routeLines...),
 		m.blankLine(),
-		HelpTextStyle.Width(m.contentWidth()).Render("[↑/↓] Navigate   [Enter] Edit   [a] Add   [⌫] Delete   [Esc] Back"),
+		HelpTextStyle.Width(m.contentWidth()).Render(hints),
 	)
 
 	mainBox := MainContainerStyle.Width(m.width - 2).Render(content)
 	return m.renderWithModal(mainBox)
+}
+
+// renderProfileTabs renders the profile tab bar.
+// Legacy routes are auto-migrated to default profile in initProfileTabs.
+func (m *WizardModel) renderProfileTabs() string {
+	var tabs []string
+
+	// Profile tabs (no separate legacy tab - legacy routes are auto-migrated to default)
+	for i, key := range m.state.ProfileTabKeys {
+		displayName := key
+		if key == "default" {
+			displayName = "default" + LaunchProfileIndicator.Render()
+		}
+		if i == m.state.ProfileTabIndex {
+			tabs = append(tabs, TabActiveStyle.Render("["+displayName+"]"))
+		} else {
+			tabs = append(tabs, TabStyle.Render("["+displayName+"]"))
+		}
+	}
+
+	// Add profile tab [+]
+	addTabIndex := len(m.state.ProfileTabKeys)
+	if m.state.ProfileTabIndex == addTabIndex {
+		tabs = append(tabs, TabAddActiveStyle.Render("[+]"))
+	} else {
+		tabs = append(tabs, TabAddStyle.Render("[+]"))
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Left, tabs...)
+}
+
+// renderProfileEditModal renders the profile edit/create modal.
+func (m *WizardModel) renderProfileEditModal() string {
+	var title string
+	if m.state.IsCreatingProfile {
+		title = "Create New Profile"
+	} else {
+		profileKey := m.getCurrentProfileKey()
+		title = "Edit Profile: " + profileKey
+	}
+
+	nameLabel := MenuItemDimmedStyle.Render("Name:")
+	nameInput := m.state.EditProfileName
+	if m.focusedField == 0 {
+		nameInput = InputFieldFocusedStyle.Width(m.inputFieldWidth()).Render(nameInput + "_")
+	} else {
+		nameInput = InputFieldStyle.Width(m.inputFieldWidth()).Render(nameInput)
+	}
+
+	descLabel := MenuItemDimmedStyle.Render("Description:")
+	descInput := m.state.EditProfileDesc
+	if m.focusedField == 1 {
+		descInput = InputFieldFocusedStyle.Width(m.inputFieldWidth()).Render(descInput + "_")
+	} else {
+		descInput = InputFieldStyle.Width(m.inputFieldWidth()).Render(descInput)
+	}
+
+	// Profile key info
+	keyInfo := ""
+	if m.state.IsCreatingProfile {
+		previewKey := generateProfileKey(m.state.EditProfileName)
+		keyInfo = MenuItemDimmedStyle.Render("(Profile key will be: " + previewKey + ")")
+	} else {
+		profileKey := m.getCurrentProfileKey()
+		if profileKey == "default" {
+			keyInfo = MenuItemDimmedStyle.Render("(Profile key: \"default\" - cannot be changed)")
+		} else {
+			keyInfo = MenuItemDimmedStyle.Render("(Profile key: " + profileKey + " - cannot be changed)")
+		}
+	}
+
+	// Buttons
+	var buttons string
+	if m.focusedField == 2 {
+		if m.state.IsCreatingProfile {
+			buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+				ButtonPrimaryStyle.Render("[Create]"),
+				"  ",
+				ButtonStyle.Render("[Cancel]"),
+			)
+		} else {
+			buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+				ButtonPrimaryStyle.Render("[Save]"),
+				"  ",
+				ButtonStyle.Render("[Cancel]"),
+			)
+		}
+	} else {
+		if m.state.IsCreatingProfile {
+			buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+				ButtonStyle.Render("[Create]"),
+				"  ",
+				ButtonStyle.Render("[Cancel]"),
+			)
+		} else {
+			buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+				ButtonStyle.Render("[Save]"),
+				"  ",
+				ButtonStyle.Render("[Cancel]"),
+			)
+		}
+	}
+
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
+		SectionHeaderStyle.Render(title),
+		m.blankLine(),
+		nameLabel,
+		m.fullWidth(nameInput),
+		m.blankLine(),
+		descLabel,
+		m.fullWidth(descInput),
+		m.blankLine(),
+		keyInfo,
+		m.blankLine(),
+		buttons,
+		m.blankLine(),
+		HelpTextStyle.Render("[Tab] Next field   [Enter] Confirm   [Esc] Cancel"),
+	)
+
+	return ProfileModalStyle.Render(content)
+}
+
+// renderMigrationModal renders the migration confirmation modal.
+func (m *WizardModel) renderMigrationModal() string {
+	title := "Create \"default\" Profile with Legacy Routes?"
+	legacyCount := len(m.state.Config.Router.Routes)
+
+	description := fmt.Sprintf("You have %d legacy routes. Creating \"default\" profile will", legacyCount)
+	description2 := "copy these routes to the launch profile."
+
+	// Buttons
+	var buttons string
+	if m.state.MigrationChoice == 0 {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+			ButtonPrimaryStyle.Render("[Yes, copy routes]"),
+			"  ",
+			ButtonStyle.Render("[No, start empty]"),
+			"  ",
+			ButtonStyle.Render("[Cancel]"),
+		)
+	} else if m.state.MigrationChoice == 1 {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+			ButtonStyle.Render("[Yes, copy routes]"),
+			"  ",
+			ButtonPrimaryStyle.Render("[No, start empty]"),
+			"  ",
+			ButtonStyle.Render("[Cancel]"),
+		)
+	} else {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+			ButtonStyle.Render("[Yes, copy routes]"),
+			"  ",
+			ButtonStyle.Render("[No, start empty]"),
+			"  ",
+			ButtonPrimaryStyle.Render("[Cancel]"),
+		)
+	}
+
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
+		SectionHeaderStyle.Render(title),
+		m.blankLine(),
+		MenuItemDimmedStyle.Width(52).Render(description),
+		MenuItemDimmedStyle.Width(52).Render(description2),
+		m.blankLine(),
+		buttons,
+		m.blankLine(),
+		HelpTextStyle.Render("[←/→] Choose   [Enter] Confirm"),
+	)
+
+	return ProfileModalStyle.Render(content)
+}
+
+// renderCreateProfile renders the full-screen profile creation view.
+func (m *WizardModel) renderCreateProfile() string {
+	title := SectionHeaderStyle.Width(m.contentWidth()).Render("Create New Profile")
+
+	// Name field
+	nameLabel := MenuItemDimmedStyle.Render("Name:")
+	nameInput := m.state.EditProfileName
+	if m.focusedField == 0 {
+		nameInput = InputFieldFocusedStyle.Width(m.inputFieldWidth()).Render(nameInput + "_")
+	} else {
+		nameInput = InputFieldStyle.Width(m.inputFieldWidth()).Render(nameInput)
+	}
+
+	// Description field
+	descLabel := MenuItemDimmedStyle.Render("Description:")
+	descInput := m.state.EditProfileDesc
+	if m.focusedField == 1 {
+		descInput = InputFieldFocusedStyle.Width(m.inputFieldWidth()).Render(descInput + "_")
+	} else {
+		descInput = InputFieldStyle.Width(m.inputFieldWidth()).Render(descInput)
+	}
+
+	// Profile key preview
+	previewKey := generateProfileKey(m.state.EditProfileName)
+	if previewKey == "" && m.state.EditProfileName != "" {
+		previewKey = "(invalid name)"
+	} else if previewKey == "" {
+		previewKey = "(enter name to generate key)"
+	}
+	keyInfo := MenuItemDimmedStyle.Width(m.contentWidth()).Render("(Profile key will be: " + previewKey + ")")
+
+	// Error message if any
+	var errorLine string
+	if m.state.ErrorMessage != "" {
+		errorLine = ErrorStyle.Width(m.contentWidth()).Render("⚠ " + m.state.ErrorMessage)
+	}
+
+	// Buttons
+	var buttons string
+	if m.focusedField == 2 {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+			ButtonPrimaryStyle.Render("[Create]"),
+			"  ",
+			ButtonStyle.Render("[Cancel]"),
+		)
+	} else if m.focusedField == 3 {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+			ButtonStyle.Render("[Create]"),
+			"  ",
+			ButtonActiveStyle.Render("[Cancel]"),
+		)
+	} else {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+			ButtonStyle.Render("[Create]"),
+			"  ",
+			ButtonStyle.Render("[Cancel]"),
+		)
+	}
+
+	// Build content using responsive width helpers
+	contentParts := []string{
+		title,
+		m.blankLine(),
+		nameLabel,
+		m.fullWidth(nameInput),
+		m.blankLine(),
+		descLabel,
+		m.fullWidth(descInput),
+		m.blankLine(),
+		keyInfo,
+	}
+
+	if errorLine != "" {
+		contentParts = append(contentParts,
+			m.blankLine(),
+			errorLine,
+		)
+	}
+
+	contentParts = append(contentParts,
+		m.blankLine(),
+		m.blankLine(),
+		m.fullWidth(buttons),
+		m.blankLine(),
+		HelpTextStyle.Width(m.contentWidth()).Render("[Tab] Next   [Enter] Confirm   [Esc] Cancel"),
+	)
+
+	content := lipgloss.JoinVertical(lipgloss.Left, contentParts...)
+
+	// Wrap in MainContainerStyle (responsive)
+	mainBox := MainContainerStyle.Width(m.width - 2).Render(content)
+
+	return m.renderWithModal(mainBox)
+}
+
+// handleCreateProfileInput handles text input for profile creation.
+func (m *WizardModel) handleCreateProfileInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle button navigation with left/right keys
+	if m.focusedField == 2 {
+		if msg.String() == "left" || msg.String() == "h" {
+			// Already on Create button (first), stay there
+			return m, nil
+		}
+		if msg.String() == "right" || msg.String() == "l" {
+			// Move to Cancel button (second) - use focusedField 3 for cancel
+			m.focusedField = 3
+			return m, nil
+		}
+	}
+	if m.focusedField == 3 {
+		if msg.String() == "left" || msg.String() == "h" {
+			m.focusedField = 2
+			return m, nil
+		}
+		if msg.String() == "right" || msg.String() == "l" {
+			// Already on Cancel button (second), stay there
+			return m, nil
+		}
+	}
+
+	// Handle text input for name field
+	if m.focusedField == 0 {
+		if msg.String() == "backspace" && len(m.state.EditProfileName) > 0 {
+			m.state.EditProfileName = m.state.EditProfileName[:len(m.state.EditProfileName)-1]
+		} else if msg.Paste {
+			m.state.EditProfileName += string(msg.Runes)
+		} else if len(msg.String()) == 1 {
+			m.state.EditProfileName += msg.String()
+		}
+	}
+
+	// Handle text input for description field
+	if m.focusedField == 1 {
+		if msg.String() == "backspace" && len(m.state.EditProfileDesc) > 0 {
+			m.state.EditProfileDesc = m.state.EditProfileDesc[:len(m.state.EditProfileDesc)-1]
+		} else if msg.Paste {
+			m.state.EditProfileDesc += string(msg.Runes)
+		} else if len(msg.String()) == 1 {
+			m.state.EditProfileDesc += msg.String()
+		}
+	}
+
+	return m, nil
+}
+
+// handleCreateProfileEnter handles Enter key for profile creation screen.
+func (m *WizardModel) handleCreateProfileEnter() (tea.Model, tea.Cmd) {
+	// Handle cancel button
+	if m.focusedField == 3 {
+		// Cancel profile creation, return to Routes screen
+		m.state.IsCreatingProfile = false
+		m.state.EditProfileName = ""
+		m.state.EditProfileDesc = ""
+		m.state.ErrorMessage = ""
+		m.focusedField = 0
+		m.state.CurrentScreen = ScreenRoutes
+		m.state.ProfileTabIndex = 0 // Return to first profile tab
+		return m, nil
+	}
+
+	// Handle create button (focusedField 0, 1, or 2)
+	name := strings.TrimSpace(m.state.EditProfileName)
+	if name == "" {
+		m.state.ErrorMessage = "Profile name is required"
+		m.focusedField = 0 // Focus name field
+		return m, nil
+	}
+
+	// Generate profile key and check for duplicates
+	key := generateProfileKey(name)
+	if key == "" {
+		m.state.ErrorMessage = "Invalid profile name (must contain at least one alphanumeric character)"
+		m.focusedField = 0
+		return m, nil
+	}
+
+	// Check if profile key already exists
+	if _, exists := m.state.Config.Router.Profiles[key]; exists {
+		m.state.ErrorMessage = "Profile '" + key + "' already exists"
+		m.focusedField = 0
+		return m, nil
+	}
+
+	// Create new profile
+	key = m.createNewProfile(name, m.state.EditProfileDesc)
+	m.state.HasChanges = true
+
+	// Reinitialize tabs and switch to new profile
+	m.initProfileTabs()
+	for i, k := range m.state.ProfileTabKeys {
+		if k == key {
+			m.state.ProfileTabIndex = i
+			break
+		}
+	}
+
+	// Clear state and return to Routes screen
+	m.state.IsCreatingProfile = false
+	m.state.EditProfileName = ""
+	m.state.EditProfileDesc = ""
+	m.state.ErrorMessage = ""
+	m.focusedField = 0
+	m.state.CurrentScreen = ScreenRoutes
+
+	return m, nil
+}
+
+// renderEditProfile renders the full-screen profile edit view.
+func (m *WizardModel) renderEditProfile() string {
+	title := SectionHeaderStyle.Width(m.contentWidth()).Render("Edit Profile: " + m.state.EditProfileKey)
+
+	// Name field
+	nameLabel := MenuItemDimmedStyle.Render("Name:")
+	var nameInput string
+	if m.state.EditProfileKey == "default" {
+		nameInput = InputFieldStyle.Width(m.inputFieldWidth()).Render(MenuItemDimmedStyle.Render("Default") + "  (locked)")
+	} else if m.focusedField == 0 {
+		nameInput = InputFieldFocusedStyle.Width(m.inputFieldWidth()).Render(m.state.EditProfileName + "_")
+	} else {
+		nameInput = InputFieldStyle.Width(m.inputFieldWidth()).Render(m.state.EditProfileName)
+	}
+
+	// Description field
+	descLabel := MenuItemDimmedStyle.Render("Description:")
+	descInput := m.state.EditProfileDesc
+	if m.focusedField == 1 {
+		descInput = InputFieldFocusedStyle.Width(m.inputFieldWidth()).Render(descInput + "_")
+	} else {
+		descInput = InputFieldStyle.Width(m.inputFieldWidth()).Render(descInput)
+	}
+
+	// Profile key info (live preview of derived key)
+	previewKey := generateProfileKey(m.state.EditProfileName)
+	if previewKey == "" && m.state.EditProfileName != "" {
+		previewKey = "(invalid name)"
+	} else if previewKey == "" {
+		previewKey = m.state.EditProfileKey
+	}
+	keyInfo := MenuItemDimmedStyle.Width(m.contentWidth()).Render("(Profile key: " + previewKey + ")")
+
+	// Error message if any
+	var errorLine string
+	if m.state.ErrorMessage != "" {
+		errorLine = ErrorStyle.Width(m.contentWidth()).Render("⚠ " + m.state.ErrorMessage)
+	}
+
+	// Buttons
+	var buttons string
+	if m.focusedField == 2 {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+			ButtonPrimaryStyle.Render("[Save]"),
+			"  ",
+			ButtonStyle.Render("[Cancel]"),
+		)
+	} else if m.focusedField == 3 {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+			ButtonStyle.Render("[Save]"),
+			"  ",
+			ButtonActiveStyle.Render("[Cancel]"),
+		)
+	} else {
+		buttons = lipgloss.JoinHorizontal(lipgloss.Left,
+			ButtonStyle.Render("[Save]"),
+			"  ",
+			ButtonStyle.Render("[Cancel]"),
+		)
+	}
+
+	// Build content using responsive width helpers
+	contentParts := []string{
+		title,
+		m.blankLine(),
+		nameLabel,
+		m.fullWidth(nameInput),
+		m.blankLine(),
+		descLabel,
+		m.fullWidth(descInput),
+		m.blankLine(),
+		keyInfo,
+	}
+
+	if errorLine != "" {
+		contentParts = append(contentParts,
+			m.blankLine(),
+			errorLine,
+		)
+	}
+
+	contentParts = append(contentParts,
+		m.blankLine(),
+		m.blankLine(),
+		m.fullWidth(buttons),
+		m.blankLine(),
+		HelpTextStyle.Width(m.contentWidth()).Render("[Tab] Next   [Enter] Confirm   [Esc] Cancel"),
+	)
+
+	content := lipgloss.JoinVertical(lipgloss.Left, contentParts...)
+
+	// Wrap in MainContainerStyle (responsive)
+	mainBox := MainContainerStyle.Width(m.width - 2).Render(content)
+
+	return m.renderWithModal(mainBox)
+}
+
+// handleEditProfileInput handles text input for profile edit screen.
+func (m *WizardModel) handleEditProfileInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle button navigation with left/right keys
+	if m.focusedField == 2 {
+		if msg.String() == "left" || msg.String() == "h" {
+			// Already on Save button (first), stay there
+			return m, nil
+		}
+		if msg.String() == "right" || msg.String() == "l" {
+			// Move to Cancel button (second) - use focusedField 3 for cancel
+			m.focusedField = 3
+			return m, nil
+		}
+	}
+	if m.focusedField == 3 {
+		if msg.String() == "left" || msg.String() == "h" {
+			m.focusedField = 2
+			return m, nil
+		}
+		if msg.String() == "right" || msg.String() == "l" {
+			// Already on Cancel button (second), stay there
+			return m, nil
+		}
+	}
+
+	// Handle text input for name field
+	if m.focusedField == 0 {
+		if msg.String() == "backspace" && len(m.state.EditProfileName) > 0 {
+			m.state.EditProfileName = m.state.EditProfileName[:len(m.state.EditProfileName)-1]
+		} else if msg.Paste {
+			m.state.EditProfileName += string(msg.Runes)
+		} else if len(msg.String()) == 1 {
+			m.state.EditProfileName += msg.String()
+		}
+	}
+
+	// Handle text input for description field
+	if m.focusedField == 1 {
+		if msg.String() == "backspace" && len(m.state.EditProfileDesc) > 0 {
+			m.state.EditProfileDesc = m.state.EditProfileDesc[:len(m.state.EditProfileDesc)-1]
+		} else if msg.Paste {
+			m.state.EditProfileDesc += string(msg.Runes)
+		} else if len(msg.String()) == 1 {
+			m.state.EditProfileDesc += msg.String()
+		}
+	}
+
+	return m, nil
+}
+
+// handleEditProfileEnter handles Enter key for profile edit screen.
+func (m *WizardModel) handleEditProfileEnter() (tea.Model, tea.Cmd) {
+	// Handle cancel button
+	if m.focusedField == 3 {
+		// Cancel profile editing, return to Routes screen
+		m.state.EditProfileKey = ""
+		m.state.EditProfileName = ""
+		m.state.EditProfileDesc = ""
+		m.state.ErrorMessage = ""
+		m.focusedField = 0
+		m.state.CurrentScreen = ScreenRoutes
+		return m, nil
+	}
+
+	// Handle save button (focusedField 0, 1, or 2)
+	name := strings.TrimSpace(m.state.EditProfileName)
+	profileKey := m.state.EditProfileKey
+
+	// For "default" profile, name is immutable — always use "Default"
+	if profileKey == "default" {
+		name = "Default"
+	} else if name == "" {
+		m.state.ErrorMessage = "Profile name is required"
+		m.focusedField = 0 // Focus name field
+		return m, nil
+	}
+
+	// Update existing profile
+	if profileKey != "" {
+		profile := m.state.Config.Router.Profiles[profileKey]
+		profile.Name = name
+		profile.Description = m.state.EditProfileDesc
+
+		// Derive new key from the updated name
+		newKey := generateProfileKey(name)
+		if newKey == "" {
+			m.state.ErrorMessage = "Invalid profile name"
+			m.focusedField = 0
+			return m, nil
+		}
+
+		if newKey != profileKey {
+			// Block renaming the "default" profile key
+			if profileKey == "default" {
+				m.state.ErrorMessage = "Cannot change the 'default' profile key"
+				m.focusedField = 0
+				return m, nil
+			}
+			// Check for duplicate key
+			if _, exists := m.state.Config.Router.Profiles[newKey]; exists {
+				m.state.ErrorMessage = "Profile '" + newKey + "' already exists"
+				m.focusedField = 0
+				return m, nil
+			}
+			// Re-key: delete old, insert under new key
+			delete(m.state.Config.Router.Profiles, profileKey)
+			profileKey = newKey
+		}
+		m.state.Config.Router.Profiles[profileKey] = profile
+		m.state.HasChanges = true
+	}
+
+	// Reinitialize tabs to reflect any name changes
+	m.initProfileTabs()
+	// Find the current profile tab
+	for i, k := range m.state.ProfileTabKeys {
+		if k == profileKey {
+			m.state.ProfileTabIndex = i
+			break
+		}
+	}
+
+	// Clear state and return to Routes screen
+	m.state.EditProfileKey = ""
+	m.state.EditProfileName = ""
+	m.state.EditProfileDesc = ""
+	m.state.ErrorMessage = ""
+	m.focusedField = 0
+	m.state.CurrentScreen = ScreenRoutes
+
+	return m, nil
 }
 
 // Edit Route rendering
@@ -2486,11 +3678,49 @@ func (m *WizardModel) renderViewConfig() string {
 		configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render("  │   └─ Models: "+models))
 	}
 
-	// Routes
+	// Profiles
+	profileCount := len(m.state.Config.Router.Profiles)
+	if profileCount > 0 {
+		launchProfile := m.state.Config.GetDefaultProfile()
+		if launchProfile == "" {
+			launchProfile = "default"
+		}
+		if _, hasDefault := m.state.Config.Router.Profiles["default"]; hasDefault {
+			launchProfile = "default" + LaunchProfileIndicator.Render()
+		}
+		configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render(fmt.Sprintf("Profiles (%d):", profileCount)))
+		profileNames := m.state.Config.GetProfileNames()
+		sort.Strings(profileNames)
+		for _, name := range profileNames {
+			profile := m.state.Config.Router.Profiles[name]
+			routeCount := len(profile.Routes)
+			displayName := name
+			if name == "default" {
+				displayName = "default" + LaunchProfileIndicator.Render()
+			}
+			configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render("  ├─ "+displayName+": "+profile.Name))
+			if profile.Description != "" {
+				configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render("  │   ├─ Description: "+profile.Description))
+				configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render(fmt.Sprintf("  │   └─ Routes: %d configured", routeCount)))
+			} else {
+				configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render(fmt.Sprintf("  │   └─ Routes: %d configured", routeCount)))
+			}
+		}
+	}
+
+	// Legacy Routes (only shown when no profiles or as fallback)
 	routeCount := len(m.state.Config.Router.Routes)
-	configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render(fmt.Sprintf("Routes (%d):", routeCount)))
-	for name, chain := range m.state.Config.Router.Routes {
-		configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render("  ├─ "+name+" → "+chain))
+	if routeCount > 0 {
+		if profileCount > 0 {
+			configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render(fmt.Sprintf("Legacy Routes (%d): (fallback)", routeCount)))
+		} else {
+			configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render(fmt.Sprintf("Routes (%d):", routeCount)))
+		}
+		for name, chain := range m.state.Config.Router.Routes {
+			configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render("  ├─ "+name+" → "+chain))
+		}
+	} else if profileCount == 0 {
+		configLines = append(configLines, MenuItemDimmedStyle.Width(m.contentWidth()).Render("Routes: (none configured)"))
 	}
 
 	// Logging

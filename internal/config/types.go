@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -30,6 +31,18 @@ type Config struct {
 	Providers map[string]ProviderConfig `json:"providers"`
 	Router    RouterConfig              `json:"router"`
 	Logging   LoggingConfig             `json:"logging,omitempty"`
+	// Profiles is kept at Config level for backward compatibility when loading old config files.
+	// It is migrated to Router.Profiles during loading and always nil after that.
+	Profiles map[string]ProfileConfig `json:"profiles,omitempty"` // Legacy location - migrated to Router.Profiles
+}
+
+// ProfileConfig represents a named route profile.
+// Profiles allow users to define multiple route configurations
+// and switch between them during a session without restarting.
+type ProfileConfig struct {
+	Name        string            `json:"name"`                  // Display name for the profile
+	Description string            `json:"description,omitempty"` // Optional description
+	Routes      map[string]string `json:"routes"`                // Route name to provider:model chain
 }
 
 // ServerConfig represents server configuration.
@@ -81,9 +94,10 @@ func (pc *ProviderConfig) Validate() error {
 
 // RouterConfig represents router configuration.
 type RouterConfig struct {
-	Routes     map[string]string `json:"routes"`
-	MaxRetries int               `json:"maxRetries"`
-	RetryDelay string            `json:"retryDelay"`
+	Routes     map[string]string          `json:"routes,omitempty"`     // Legacy routes (empty when profiles are used)
+	Profiles   map[string]ProfileConfig   `json:"profiles,omitempty"`   // Named route profiles (new location)
+	MaxRetries int                        `json:"maxRetries,omitempty"` // Maximum retries for failover
+	RetryDelay string                     `json:"retryDelay,omitempty"` // Delay between retries
 }
 
 // LoggingConfig represents logging configuration.
@@ -203,6 +217,53 @@ type RouteTarget struct {
 	Model    string
 }
 
+// GetActiveRoutes returns the routes to use based on profile name or legacy config.
+// If profiles are configured and profileName is set, returns that profile's routes.
+// Otherwise, falls back to the legacy router.routes for backward compatibility.
+func (cfg *Config) GetActiveRoutes(profileName string) map[string]string {
+	// Check if profiles are configured in Router
+	if len(cfg.Router.Profiles) > 0 && profileName != "" {
+		if profile, ok := cfg.Router.Profiles[profileName]; ok {
+			return profile.Routes
+		}
+	}
+	// Fall back to legacy routes
+	return cfg.Router.Routes
+}
+
+// GetDefaultProfile returns the default profile name to use at startup.
+// Returns "default" if it exists, otherwise the first profile alphabetically.
+// Returns "" if no profiles are configured (legacy mode).
+func (cfg *Config) GetDefaultProfile() string {
+	if len(cfg.Router.Profiles) == 0 {
+		return ""
+	}
+	// Prefer "default" profile if it exists
+	if _, ok := cfg.Router.Profiles["default"]; ok {
+		return "default"
+	}
+	// Return first profile alphabetically
+	for name := range cfg.Router.Profiles {
+		return name
+	}
+	return ""
+}
+
+// HasProfiles returns true if profiles are configured.
+func (cfg *Config) HasProfiles() bool {
+	return len(cfg.Router.Profiles) > 0
+}
+
+// GetProfileNames returns a sorted list of profile names.
+func (cfg *Config) GetProfileNames() []string {
+	names := make([]string, 0, len(cfg.Router.Profiles))
+	for name := range cfg.Router.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // ParseRoute parses a route string into targets.
 // Format: "provider1:model1;provider2:model2"
 func ParseRoute(route string) []RouteTarget {
@@ -238,7 +299,8 @@ func Defaults() *Config {
 		},
 		Providers: make(map[string]ProviderConfig),
 		Router: RouterConfig{
-			Routes:     make(map[string]string),
+			Routes:   make(map[string]string),
+			Profiles: make(map[string]ProfileConfig), // Empty profiles for legacy mode
 			MaxRetries: 2,
 			RetryDelay: "500ms",
 		},

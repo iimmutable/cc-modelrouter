@@ -526,6 +526,48 @@ func TestServer_PortZero(t *testing.T) {
 	}
 }
 
+func TestServer_ActualAddr(t *testing.T) {
+	cfg := &ServerConfig{
+		Host: "localhost",
+		Port: 0, // Let OS pick port
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// ActualAddr should be empty before Start
+	if server.ActualAddr() != "" {
+		t.Errorf("expected empty ActualAddr before Start, got '%s'", server.ActualAddr())
+	}
+
+	// Start the server
+	err = server.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		server.Stop(ctx)
+	}()
+
+	// ActualAddr should return the OS-assigned port (not 0)
+	actualAddr := server.ActualAddr()
+	if actualAddr == "" {
+		t.Fatal("expected non-empty ActualAddr after Start")
+	}
+	if actualAddr == "localhost:0" {
+		t.Errorf("ActualAddr should not be 'localhost:0' after Start, got '%s'", actualAddr)
+	}
+
+	// Addr should still return the configured address
+	if server.Addr() != "localhost:0" {
+		t.Errorf("expected Addr 'localhost:0', got '%s'", server.Addr())
+	}
+}
+
 // Helper types for testing
 
 type serverTestMockRouter struct{}
@@ -536,6 +578,10 @@ func (m *serverTestMockRouter) DetectRoute(req router.RouteRequest) string {
 
 func (m *serverTestMockRouter) GetTargets(routeName string) []config.RouteTarget {
 	return []config.RouteTarget{{Provider: "anthropic", Model: "claude-3"}}
+}
+
+func (m *serverTestMockRouter) SetActiveProfile(profile string) {
+	// No-op for mock
 }
 
 type serverTestMockTransformerRegistry struct{}
@@ -562,14 +608,90 @@ func (m *serverTestAnthropicTransformer) TransformStreamEvent(event *transformer
 }
 type serverTestMockUsageTracker struct{}
 
-func (t *serverTestMockUsageTracker) Record(instanceID, route, model string, tokens, fallbacks int) {}
+func (t *serverTestMockUsageTracker) Record(instanceID, route, model, profile, provider string, tokens, fallbacks int) {}
 
 type serverTestShutdownableTracker struct {
 	shutdownCalled bool
 }
 
-func (t *serverTestShutdownableTracker) Record(instanceID, route, model string, tokens, fallbacks int) {}
+func (t *serverTestShutdownableTracker) Record(instanceID, route, model, profile, provider string, tokens, fallbacks int) {}
 
 func (t *serverTestShutdownableTracker) Shutdown() {
 	t.shutdownCalled = true
+}
+
+func TestServer_SetActiveProfile(t *testing.T) {
+	cfg := &ServerConfig{
+		Host: "localhost",
+		Port: 0, // Random port
+	}
+
+	server, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	// Set up config with profiles
+	appCfg := &config.Config{
+		Router: config.RouterConfig{
+			Profiles: map[string]config.ProfileConfig{
+				"fast":    {Name: "Fast", Routes: map[string]string{"default": "p:fast"}},
+				"quality": {Name: "Quality", Routes: map[string]string{"default": "p:quality"}},
+			},
+		},
+	}
+	server.handler.SetConfig(appCfg)
+
+	// Set active profile before router is set
+	server.SetActiveProfile("fast")
+	if got := server.handler.GetActiveProfile(); got != "fast" {
+		t.Errorf("expected handler profile 'fast', got '%s'", got)
+	}
+
+	// Now set the router and verify it also gets the profile
+	engine := router.NewEngine(&config.Config{
+		Router: config.RouterConfig{
+			Profiles: map[string]config.ProfileConfig{
+				"fast":    {Name: "Fast", Routes: map[string]string{"default": "p:fast"}},
+				"quality": {Name: "Quality", Routes: map[string]string{"default": "p:quality"}},
+			},
+		},
+	})
+	server.handler.SetRouter(&routerAdapter{engine: engine})
+
+	// Set active profile after router is set — should propagate to both
+	server.SetActiveProfile("quality")
+	if got := server.handler.GetActiveProfile(); got != "quality" {
+		t.Errorf("expected handler profile 'quality', got '%s'", got)
+	}
+	if got := engine.GetActiveProfile(); got != "quality" {
+		t.Errorf("expected router profile 'quality', got '%s'", got)
+	}
+}
+
+func TestServer_SetAdminToken_GetAdminToken(t *testing.T) {
+	cfg := &ServerConfig{Host: "localhost", Port: 8081}
+	server, _ := NewServer(cfg)
+
+	server.SetAdminToken("my-secret-token")
+	if got := server.GetAdminToken(); got != "my-secret-token" {
+		t.Errorf("expected 'my-secret-token', got '%s'", got)
+	}
+}
+
+// Minimal adapter for router.Engine to proxy.Router interface
+type routerAdapter struct {
+	engine *router.Engine
+}
+
+func (a *routerAdapter) DetectRoute(req router.RouteRequest) string {
+	return a.engine.DetectRoute(req)
+}
+
+func (a *routerAdapter) GetTargets(routeName string) []config.RouteTarget {
+	return a.engine.GetTargets(routeName)
+}
+
+func (a *routerAdapter) SetActiveProfile(profile string) {
+	a.engine.SetActiveProfile(profile)
 }

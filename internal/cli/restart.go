@@ -125,7 +125,12 @@ func restartInstance(inst *daemon.InstanceMetadata) error {
 	daemon.DeleteInstance(inst.ID)
 
 	fmt.Printf("Instance %s stopped. Please start a new instance manually.\n", inst.ID)
-	fmt.Printf("  ccrouter start --port %d", inst.Port)
+	fmt.Printf("  ccrouter start")
+	// Omit --port for dynamic (ephemeral) ports — suggesting a specific ephemeral
+	// port is misleading since it was OS-assigned and likely no longer available
+	if inst.Port <= 49152 {
+		fmt.Printf(" --port %d", inst.Port)
+	}
 	if inst.ConfigPath != "" {
 		fmt.Printf(" --config %s", inst.ConfigPath)
 	}

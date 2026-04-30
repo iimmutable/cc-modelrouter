@@ -39,6 +39,13 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
+	// Migrate profiles from old location (Config.Profiles) to new location (Router.Profiles)
+	// for backward compatibility with older config files.
+	if len(cfg.Profiles) > 0 && len(cfg.Router.Profiles) == 0 {
+		cfg.Router.Profiles = cfg.Profiles
+		cfg.Profiles = nil // Clear old location - won't be saved
+	}
+
 	return cfg, nil
 }
 
@@ -54,6 +61,13 @@ func LoadRaw(path string) (*Config, error) {
 	cfg := Defaults()
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Migrate profiles from old location (Config.Profiles) to new location (Router.Profiles)
+	// for backward compatibility with older config files.
+	if len(cfg.Profiles) > 0 && len(cfg.Router.Profiles) == 0 {
+		cfg.Router.Profiles = cfg.Profiles
+		cfg.Profiles = nil // Clear old location - won't be saved
 	}
 
 	return cfg, nil

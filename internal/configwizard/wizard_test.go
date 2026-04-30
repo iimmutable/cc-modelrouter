@@ -981,6 +981,7 @@ func TestEditRoute_SaveRequiresName(t *testing.T) {
 func TestEditRoute_EnterFromRoutesResetsState(t *testing.T) {
 	m := newTestModel()
 	m.state.Config.Router.Routes["default"] = "openrouter:claude-sonnet-4;bigmodel:glm-4.7"
+	m.initProfileTabs() // Initialize profile tabs before testing
 	toScreen(m, ScreenRoutes)
 	m.state.RouteCursor = 0
 
@@ -1003,7 +1004,10 @@ func TestEditRoute_EnterFromRoutesResetsState(t *testing.T) {
 
 func TestEditRoute_AddKeyFromRoutesResetsState(t *testing.T) {
 	m := newTestModel()
+	m.state.Config.Router.Routes["default"] = "openrouter:claude-sonnet-4;bigmodel:glm-4.7" // Add a route so we're not on the [+] tab
+	m.initProfileTabs() // Initialize profile tabs before testing
 	toScreen(m, ScreenRoutes)
+	m.state.ProfileTabIndex = 0 // Ensure we're on the legacy tab
 
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}
 	m.Update(msg)

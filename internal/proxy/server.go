@@ -41,6 +41,7 @@ type Server struct {
 	mu           sync.Mutex
 	running      bool
 	ready        chan struct{} // Closed when server is ready to accept connections
+	actualAddr   string        // Actual bound address (differs from config when port is 0)
 }
 
 // NewServer creates a new proxy server.
@@ -113,6 +114,25 @@ func (s *Server) SetStreamingInterceptors(interceptors []StreamingResponseInterc
 	s.handler.SetStreamingInterceptors(interceptors)
 }
 
+// SetAdminToken sets the admin API token for runtime management.
+func (s *Server) SetAdminToken(token string) {
+	s.handler.SetAdminToken(token)
+}
+
+// SetActiveProfile sets the initial active profile for the handler and router.
+func (s *Server) SetActiveProfile(profile string) {
+	s.handler.SetActiveProfile(profile)
+	// Also set it on the router if it's already set
+	if s.handler.router != nil {
+		s.handler.router.SetActiveProfile(profile)
+	}
+}
+
+// GetAdminToken returns the admin API token.
+func (s *Server) GetAdminToken() string {
+	return s.handler.GetAdminToken()
+}
+
 // AddRequestInterceptor adds a single request interceptor.
 func (s *Server) AddRequestInterceptor(interceptor RequestInterceptor) {
 	s.handler.AddRequestInterceptor(interceptor)
@@ -171,6 +191,9 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 
+	// Store the actual bound address (differs from config when port is 0)
+	s.actualAddr = listener.Addr().String()
+
 	// Launch server in goroutine
 	go func() {
 		// Signal readiness immediately - listener is already accepting connections
@@ -203,9 +226,15 @@ func (s *Server) Stop(ctx context.Context) error {
 	return err
 }
 
-// Addr returns the server address.
+// Addr returns the configured server address.
 func (s *Server) Addr() string {
 	return fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
+}
+
+// ActualAddr returns the actual bound address after Start().
+// When port 0 is used, this returns the OS-assigned port.
+func (s *Server) ActualAddr() string {
+	return s.actualAddr
 }
 
 // IsRunning returns true if the server is running.

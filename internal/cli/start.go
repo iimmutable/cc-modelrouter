@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -32,10 +33,10 @@ The router acts as a proxy between Claude Code and LLM providers. It routes requ
 based on configured rules and transforms requests/responses for provider compatibility.
 
 Flags:
-  -c, --config <path>   Path to custom configuration file (YAML or JSON).
+  -c, --config <path>   Path to custom configuration file.
                         If not specified, searches for config in:
-                        - .ccrouter.yml in project root
-                        - ~/.config/ccrouter/config.yml (global)
+                        - <project>/.cc-modelrouter/config.json (project)
+                        - ~/.cc-modelrouter/config.json (global)
 
   -p, --port <number>   Port number for the router to listen on.
                         Overrides the port specified in config file.
@@ -50,7 +51,7 @@ Examples:
   ccrouter start
 
   # Start with custom config file
-  ccrouter start --config /path/to/config.yml
+  ccrouter start --config /path/to/config.json
 
   # Start on specific port
   ccrouter start --port 9090
@@ -72,6 +73,7 @@ Flags:
 	cmd.Flags().StringP("host", "H", "", "Host to bind to (overrides config)")
 	cmd.Flags().String("log-destination", "", "Log destination (file|stdout|stderr|path)")
 	cmd.Flags().String("log-level", "", "Log level: debug, info, warn, error (default: from config)")
+	cmd.Flags().String("profile", "", "Specify which route profile to use at startup")
 
 	return cmd
 }
@@ -82,6 +84,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetInt("port")
 	host, _ := cmd.Flags().GetString("host")
 	logDestination, _ := cmd.Flags().GetString("log-destination")
+	profileFlag, _ := cmd.Flags().GetString("profile")
 
 	// Get working directory
 	projectRoot, err := os.Getwd()
@@ -103,6 +106,24 @@ func runStart(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
+	}
+
+	// Validate and set profile if specified
+	var profileName string
+	if profileFlag != "" {
+		if !cfg.HasProfiles() {
+			return fmt.Errorf("no profiles configured in config, cannot use profile flag")
+		}
+
+		if _, ok := cfg.Router.Profiles[profileFlag]; !ok {
+			availableProfiles := cfg.GetProfileNames()
+			return fmt.Errorf("invalid profile '%s', available profiles: %v", profileFlag, availableProfiles)
+		}
+
+		profileName = profileFlag
+		fmt.Printf("Using profile: %s\n", profileName)
+	} else {
+		profileName = cfg.GetDefaultProfile()
 	}
 
 	// Apply flag overrides
@@ -177,6 +198,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	// Setup router engine
 	routerEngine := router.NewEngine(cfg)
+	routerEngine.SetActiveProfile(profileName)
 	server.SetRouter(NewRouterAdapter(routerEngine))
 
 	// Setup transformer registry
@@ -251,6 +273,13 @@ func runStart(cmd *cobra.Command, args []string) error {
 	server.SetUsageTracker(tracker)
 	server.SetInstanceID(instanceID)
 
+	// Generate admin token for runtime profile management
+	adminToken := daemon.GenerateAdminToken()
+	server.SetAdminToken(adminToken)
+
+	// Initialize handler's active profile
+	server.SetActiveProfile(profileName)
+
 	// Add logging interceptor
 	loggingInterceptor := proxy.NewLoggingInterceptor()
 	server.AddRequestInterceptor(loggingInterceptor)
@@ -261,22 +290,31 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start server: %w", err)
 	}
 
-	// Save instance metadata
+	// Get actual bound address (important when port is 0 — OS assigns a free port)
+	actualAddr := server.ActualAddr()
+	_, actualPort, _ := net.SplitHostPort(actualAddr)
+
+	// Save instance metadata with admin token and active profile
 	meta := &daemon.InstanceMetadata{
-		ID:          instanceID,
-		Port:        cfg.Server.Port,
-		PID:         os.Getpid(),
-		ConfigType:  configType,
-		ConfigPath:  configPath,
-		ProjectRoot: projectRoot,
-		StartTime:   time.Now(),
+		ID:           instanceID,
+		Port:         cfg.Server.Port,
+		PID:          os.Getpid(),
+		ConfigType:   configType,
+		ConfigPath:   configPath,
+		ProjectRoot:  projectRoot,
+		StartTime:    time.Now(),
+		AdminToken:   adminToken,
+		ActiveProfile: profileName,
+	}
+	if actualPort != "" {
+		fmt.Sscanf(actualPort, "%d", &meta.Port)
 	}
 	if err := daemon.SaveInstance(meta); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save instance metadata: %v\n", err)
 	}
 
 	fmt.Printf("Router started with instance ID: %s\n", instanceID)
-	fmt.Printf("Set ANTHROPIC_BASE_URL=http://%s to use the router\n", addr)
+	fmt.Printf("Set ANTHROPIC_BASE_URL=http://%s to use the router\n", actualAddr)
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
