@@ -7,29 +7,29 @@ import (
 	lipgloss "github.com/charmbracelet/lipgloss"
 )
 
-// Wizard color palette - Light theme (transparent backgrounds)
+// Wizard color palette - Adaptive (light/dark terminal themes)
 var (
 	// Background colors (kept for selected/interactive elements only)
-	BaseBackground   = lipgloss.Color("#f8f8f2") // Cream (used sparingly)
-	PanelBackground  = lipgloss.Color("#ffffff") // White (used sparingly)
-	AltRowBackground = lipgloss.Color("#eff0eb") // Light gray (alternate rows)
+	BaseBackground   = lipgloss.AdaptiveColor{Light: "#f8f8f2", Dark: "#1e1e2e"}
+	PanelBackground  = lipgloss.AdaptiveColor{Light: "#ffffff", Dark: "#313244"}
+	AltRowBackground = lipgloss.AdaptiveColor{Light: "#eff0eb", Dark: "#45475a"}
 
 	// Text colors
-	PrimaryText   = lipgloss.Color("#282a36") // Dark
-	SecondaryText = lipgloss.Color("#6272a4") // Medium gray
-	HeaderText    = lipgloss.Color("#bd93f9") // Purple
+	PrimaryText   = lipgloss.AdaptiveColor{Light: "#282a36", Dark: "#cdd6f4"}
+	SecondaryText = lipgloss.AdaptiveColor{Light: "#6272a4", Dark: "#a6adc8"}
+	HeaderText    = lipgloss.AdaptiveColor{Light: "#bd93f9", Dark: "#cba6f7"}
 
 	// Accent colors
-	SelectionAccent = lipgloss.Color("#8be9fd") // Cyan
-	BorderColor     = lipgloss.Color("#44475a") // Gray
+	SelectionAccent = lipgloss.AdaptiveColor{Light: "#8be9fd", Dark: "#89b4fa"}
+	BorderColor     = lipgloss.AdaptiveColor{Light: "#44475a", Dark: "#585b70"}
 
 	// Status colors
-	SuccessColor   = lipgloss.Color("#2e7d32") // Green
-	SuccessBorder  = lipgloss.Color("#1b5e20") // Darker green for primary button border
-	ErrorColor     = lipgloss.Color("#c62828") // Red
-	ErrorBorder    = lipgloss.Color("#8e0000") // Darker red for danger button border
-	WarningColor   = lipgloss.Color("#e65100") // Orange
-	InfoColor      = lipgloss.Color("#1565c0") // Blue
+	SuccessColor   = lipgloss.AdaptiveColor{Light: "#2e7d32", Dark: "#a6e3a1"}
+	SuccessBorder  = lipgloss.AdaptiveColor{Light: "#1b5e20", Dark: "#4e8254"}
+	ErrorColor     = lipgloss.AdaptiveColor{Light: "#c62828", Dark: "#f38ba8"}
+	ErrorBorder    = lipgloss.AdaptiveColor{Light: "#8e0000", Dark: "#b34d4d"}
+	WarningColor   = lipgloss.AdaptiveColor{Light: "#e65100", Dark: "#fab387"}
+	InfoColor      = lipgloss.AdaptiveColor{Light: "#1565c0", Dark: "#89b4fa"}
 )
 
 // Base styles (no backgrounds on non-interactive elements — terminal native bg shows through)
@@ -97,7 +97,7 @@ var (
 			Foreground(PrimaryText).
 			Background(PanelBackground).
 			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("#bbbbbb")).
+			BorderForeground(BorderColor).
 			Padding(0, 2)
 
 	// Button - selected/active (keeps background)
@@ -240,6 +240,45 @@ var (
 	KeyHintStyle = lipgloss.NewStyle().
 			Foreground(SelectionAccent).
 			SetString("[" + "key" + "]")
+
+	// Profile tab styles
+	TabStyle = lipgloss.NewStyle().
+			Foreground(SecondaryText).
+			Padding(0, 1).
+			MarginRight(1)
+
+	TabActiveStyle = lipgloss.NewStyle().
+			Foreground(PrimaryText).
+			Background(SelectionAccent).
+			Bold(true).
+			Padding(0, 1).
+			MarginRight(1)
+
+	TabAddStyle = lipgloss.NewStyle().
+			Foreground(HeaderText).
+			Padding(0, 1).
+			MarginRight(1)
+
+	TabAddActiveStyle = lipgloss.NewStyle().
+			Foreground(PrimaryText).
+			Background(HeaderText).
+			Bold(true).
+			Padding(0, 1).
+			MarginRight(1)
+
+	// Launch profile indicator (★)
+	LaunchProfileIndicator = lipgloss.NewStyle().
+				Foreground(SuccessColor).
+				SetString("★")
+
+	// Profile modal styles
+	ProfileModalStyle = lipgloss.NewStyle().
+				Foreground(PrimaryText).
+				Background(PanelBackground).
+				Width(56).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(HeaderText).
+				Padding(1, 2)
 )
 
 // Helper functions
@@ -273,6 +312,8 @@ func GetScreenTitle(screen Screen) string {
 		return "Routes"
 	case ScreenEditRoute:
 		return "Add/Edit Route"
+	case ScreenCreateProfile:
+		return "Create New Profile"
 	case ScreenServer:
 		return "Proxy Settings"
 	case ScreenLogging:
