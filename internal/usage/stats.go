@@ -9,6 +9,7 @@ type Summary struct {
 
 // RouteStats represents stats for a single route.
 type RouteStats struct {
+	Profile   string
 	Route     string
 	Requests  int
 	Tokens    int
@@ -17,6 +18,7 @@ type RouteStats struct {
 
 // ModelStats represents stats for a single model.
 type ModelStats struct {
+	Profile  string
 	Model    string
 	Requests int
 	Tokens   int
@@ -33,14 +35,19 @@ func AggregateSummary(records []*Record) Summary {
 	return s
 }
 
-// AggregateByRoute groups records by route.
+// AggregateByRoute groups records by profile/provider.route.
 func AggregateByRoute(records []*Record) map[string]*RouteStats {
 	result := make(map[string]*RouteStats)
 	for _, r := range records {
-		stats, ok := result[r.Route]
+		profile := r.Profile
+		if profile == "" {
+			profile = "default"
+		}
+		key := profile + "/" + r.Provider + "." + r.Route
+		stats, ok := result[key]
 		if !ok {
-			stats = &RouteStats{Route: r.Route}
-			result[r.Route] = stats
+			stats = &RouteStats{Profile: profile, Route: r.Provider + "." + r.Route}
+			result[key] = stats
 		}
 		stats.Requests++
 		stats.Tokens += r.Tokens
@@ -49,14 +56,19 @@ func AggregateByRoute(records []*Record) map[string]*RouteStats {
 	return result
 }
 
-// AggregateByModel groups records by model.
+// AggregateByModel groups records by profile/provider.model.
 func AggregateByModel(records []*Record) map[string]*ModelStats {
 	result := make(map[string]*ModelStats)
 	for _, r := range records {
-		stats, ok := result[r.Model]
+		profile := r.Profile
+		if profile == "" {
+			profile = "default"
+		}
+		key := profile + "/" + r.Provider + "." + r.Model
+		stats, ok := result[key]
 		if !ok {
-			stats = &ModelStats{Model: r.Model}
-			result[r.Model] = stats
+			stats = &ModelStats{Profile: profile, Model: r.Provider + "." + r.Model}
+			result[key] = stats
 		}
 		stats.Requests++
 		stats.Tokens += r.Tokens

@@ -18,7 +18,7 @@ func TestTrackerRecord(t *testing.T) {
 	tracker := NewTracker(db, 2, 100*time.Millisecond) // Small buffer for testing
 
 	// Record below buffer size
-	tracker.Record("inst1", "/think", "model1", 100, 0)
+	tracker.Record("inst1", "/think", "model1", "default", "openrouter", 100, 0)
 
 	// Should not be flushed yet (buffer not full)
 	records, _ := GetRecordsByPeriod(db, "", time.Time{}, time.Now())
@@ -27,8 +27,8 @@ func TestTrackerRecord(t *testing.T) {
 	}
 
 	// Fill buffer
-	tracker.Record("inst1", "/think", "model1", 200, 0)
-	tracker.Record("inst1", "/think", "model1", 300, 0)
+	tracker.Record("inst1", "/think", "model1", "default", "openrouter", 200, 0)
+	tracker.Record("inst1", "/think", "model1", "default", "openrouter", 300, 0)
 
 	// Wait for async flush
 	time.Sleep(200 * time.Millisecond)
@@ -51,7 +51,7 @@ func TestTrackerFlushOnShutdown(t *testing.T) {
 
 	tracker := NewTracker(db, 500, time.Hour) // Large timeout
 
-	tracker.Record("inst1", "/think", "model1", 100, 0)
+	tracker.Record("inst1", "/think", "model1", "default", "openrouter", 100, 0)
 
 	// Shutdown should flush
 	tracker.Shutdown()
@@ -75,7 +75,7 @@ func TestTrackerFlushOnTimeout(t *testing.T) {
 
 	tracker := NewTracker(db, 500, 50*time.Millisecond) // Short timeout
 
-	tracker.Record("inst1", "/think", "model1", 100, 0)
+	tracker.Record("inst1", "/think", "model1", "default", "openrouter", 100, 0)
 
 	// Should not be flushed immediately
 	records, _ := GetRecordsByPeriod(db, "", time.Time{}, time.Now())
@@ -109,7 +109,7 @@ func TestTrackerConcurrent(t *testing.T) {
 	done := make(chan bool)
 	for i := 0; i < 10; i++ {
 		go func(n int) {
-			tracker.Record("inst1", "/think", "model1", n*100, 0)
+			tracker.Record("inst1", "/think", "model1", "default", "openrouter", n*100, 0)
 			done <- true
 		}(i)
 	}
@@ -141,7 +141,7 @@ func TestTrackerDefaultValues(t *testing.T) {
 
 	tracker := NewTracker(db, 0, 0) // Invalid values, should use defaults
 
-	tracker.Record("inst1", "/think", "model1", 100, 0)
+	tracker.Record("inst1", "/think", "model1", "default", "openrouter", 100, 0)
 
 	// Shutdown should flush
 	tracker.Shutdown()
@@ -165,7 +165,7 @@ func TestTrackerDoubleShutdown(t *testing.T) {
 
 	tracker := NewTracker(db, 100, time.Hour)
 
-	tracker.Record("inst1", "/think", "model1", 100, 0)
+	tracker.Record("inst1", "/think", "model1", "default", "openrouter", 100, 0)
 
 	// First shutdown
 	tracker.Shutdown()

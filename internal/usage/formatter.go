@@ -46,17 +46,32 @@ func FormatUsage(w io.Writer, instanceID, period string, records []*Record) {
 	fmt.Fprintln(tw, "  Route\tRequests\tTokens\tFallbacks")
 	fmt.Fprintln(tw, "  ─────────────────────────────────────────────────")
 
-	// Sort routes by name
+	// Sort routes by (Profile, Route) for hierarchical rendering
 	routes := make([]*RouteStats, 0, len(byRoute))
 	for _, stats := range byRoute {
 		routes = append(routes, stats)
 	}
 	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Profile != routes[j].Profile {
+			return routes[i].Profile < routes[j].Profile
+		}
 		return routes[i].Route < routes[j].Route
 	})
 
+	prevProfile := ""
 	for _, stats := range routes {
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%d\n",
+		// Render profile header when profile changes
+		if stats.Profile != prevProfile {
+			if prevProfile != "" {
+				tw.Flush()
+				fmt.Fprintln(w)
+				tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+			}
+			fmt.Fprintf(tw, "  [%s]\n", stats.Profile)
+			prevProfile = stats.Profile
+		}
+
+		fmt.Fprintf(tw, "    %s\t%s\t%s\t%d\n",
 			stats.Route,
 			formatNumber(stats.Requests),
 			FormatTokens(stats.Tokens),
@@ -70,17 +85,32 @@ func FormatUsage(w io.Writer, instanceID, period string, records []*Record) {
 	fmt.Fprintln(tw, "  Model\tRequests\tTokens")
 	fmt.Fprintln(tw, "  ──────────────────────────────────────────")
 
-	// Sort models by token count descending
+	// Sort models by (Profile, Tokens desc) for hierarchical rendering
 	models := make([]*ModelStats, 0, len(byModel))
 	for _, stats := range byModel {
 		models = append(models, stats)
 	}
 	sort.Slice(models, func(i, j int) bool {
+		if models[i].Profile != models[j].Profile {
+			return models[i].Profile < models[j].Profile
+		}
 		return models[i].Tokens > models[j].Tokens
 	})
 
+	prevProfile = ""
 	for _, stats := range models {
-		fmt.Fprintf(tw, "  %s\t%s\t%s\n",
+		// Render profile header when profile changes
+		if stats.Profile != prevProfile {
+			if prevProfile != "" {
+				tw.Flush()
+				fmt.Fprintln(w)
+				tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+			}
+			fmt.Fprintf(tw, "  [%s]\n", stats.Profile)
+			prevProfile = stats.Profile
+		}
+
+		fmt.Fprintf(tw, "    %s\t%s\t%s\n",
 			stats.Model,
 			formatNumber(stats.Requests),
 			FormatTokens(stats.Tokens))

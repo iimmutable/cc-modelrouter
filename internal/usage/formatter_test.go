@@ -53,9 +53,9 @@ func TestFormatNumber(t *testing.T) {
 
 func TestFormatUsage(t *testing.T) {
 	records := []*Record{
-		{InstanceID: "inst1", Route: "/think", Model: "gpt-4o", Tokens: 25000000, Fallbacks: 2, Timestamp: time.Now()},
-		{InstanceID: "inst1", Route: "/think", Model: "claude-sonnet-4", Tokens: 15000000, Fallbacks: 1, Timestamp: time.Now()},
-		{InstanceID: "inst1", Route: "/ultrathink", Model: "gemini-2.0-flash", Tokens: 5600000, Fallbacks: 0, Timestamp: time.Now()},
+		{InstanceID: "inst1", Profile: "", Provider: "", Route: "/think", Model: "gpt-4o", Tokens: 25000000, Fallbacks: 2, Timestamp: time.Now()},
+		{InstanceID: "inst1", Profile: "", Provider: "", Route: "/think", Model: "claude-sonnet-4", Tokens: 15000000, Fallbacks: 1, Timestamp: time.Now()},
+		{InstanceID: "inst1", Profile: "", Provider: "", Route: "/ultrathink", Model: "gemini-2.0-flash", Tokens: 5600000, Fallbacks: 0, Timestamp: time.Now()},
 	}
 
 	var buf bytes.Buffer

@@ -10,14 +10,16 @@ import (
 
 const (
 	DefaultBufferSize    = 500
-	DefaultFlushTimeout = 3 * time.Second
+	DefaultFlushTimeout = 1 * time.Second // Reduced from 3s for near-realtime monitor updates
+	channelCapacity     = 1000
 )
 
 // Tracker tracks usage records in memory and flushes to database.
+// Uses a buffered channel for lock-free submission on the hot path,
+// with a single goroutine handling batching and SQLite writes.
 type Tracker struct {
 	db           *sql.DB
-	buffer       []*Record
-	mu           sync.Mutex
+	recordCh     chan *Record
 	bufferSize   int
 	flushTimeout time.Duration
 	done         chan struct{}
@@ -35,7 +37,7 @@ func NewTracker(db *sql.DB, bufferSize int, flushTimeout time.Duration) *Tracker
 
 	t := &Tracker{
 		db:           db,
-		buffer:       make([]*Record, 0, bufferSize),
+		recordCh:     make(chan *Record, channelCapacity),
 		bufferSize:   bufferSize,
 		flushTimeout: flushTimeout,
 		done:         make(chan struct{}),
@@ -47,45 +49,32 @@ func NewTracker(db *sql.DB, bufferSize int, flushTimeout time.Duration) *Tracker
 	return t
 }
 
-// Record adds a usage record.
-func (t *Tracker) Record(instanceID, route, model string, tokens, fallbacks int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	r := &Record{
+// Record adds a usage record via a buffered channel.
+// Zero mutex contention on the hot path — the single flushLoop goroutine
+// handles all SQLite writes.
+func (t *Tracker) Record(instanceID, route, model, profile, provider string, tokens, fallbacks int) {
+	t.recordCh <- &Record{
 		InstanceID: instanceID,
+		Profile:    profile,
+		Provider:   provider,
 		Route:      route,
 		Model:      model,
 		Tokens:     tokens,
 		Fallbacks:  fallbacks,
 		Timestamp:  time.Now(),
 	}
-
-	t.buffer = append(t.buffer, r)
-
-	if len(t.buffer) >= t.bufferSize {
-		t.flush()
-	}
 }
 
 // flush writes buffered records to database.
-// Must be called with mu held.
-func (t *Tracker) flush() {
-	if len(t.buffer) == 0 {
+// Called only from the flushLoop goroutine — no mutex needed.
+func (t *Tracker) flush(records []*Record) {
+	if len(records) == 0 {
 		return
 	}
 
-	// Copy buffer and clear
-	records := make([]*Record, len(t.buffer))
-	copy(records, t.buffer)
-	t.buffer = t.buffer[:0]
-
-	// Batch insert
 	tx, err := t.db.Begin()
 	if err != nil {
 		logging.Errorf("usage tracker: failed to begin transaction: %v", err)
-		// Restore records to buffer on error
-		t.buffer = append(t.buffer, records...)
 		return
 	}
 	defer tx.Rollback()
@@ -93,35 +82,61 @@ func (t *Tracker) flush() {
 	for i, r := range records {
 		if err := InsertRecord(tx, r); err != nil {
 			logging.Errorf("usage tracker: failed to insert record %d: %v", i, err)
-			// Restore unprocessed records to buffer
-			t.buffer = append(t.buffer, records[i:]...)
 			return
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		logging.Errorf("usage tracker: failed to commit transaction: %v", err)
-		// Restore records to buffer on commit failure
-		t.buffer = append(t.buffer, records...)
 		return
 	}
 }
 
-// flushLoop periodically flushes the buffer.
+// flushLoop receives records from the channel, batches them, and flushes
+// to SQLite periodically or when the batch reaches bufferSize.
 func (t *Tracker) flushLoop() {
 	defer t.wg.Done()
 
-	ticker := time.NewTicker(t.flushTimeout)
-	defer ticker.Stop()
+	buffer := make([]*Record, 0, t.bufferSize)
+	timer := time.NewTimer(t.flushTimeout)
+	defer timer.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
-			t.mu.Lock()
-			t.flush()
-			t.mu.Unlock()
+		case record := <-t.recordCh:
+			buffer = append(buffer, record)
+			if len(buffer) >= t.bufferSize {
+				t.flush(buffer)
+				buffer = buffer[:0]
+				// Reset timer since we just flushed
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(t.flushTimeout)
+			}
+		case <-timer.C:
+			if len(buffer) > 0 {
+				t.flush(buffer)
+				buffer = buffer[:0]
+			}
+			timer.Reset(t.flushTimeout)
 		case <-t.done:
-			return
+			// Drain any remaining records from channel
+			for {
+				select {
+				case record := <-t.recordCh:
+					buffer = append(buffer, record)
+				default:
+					// Channel drained
+					if len(buffer) > 0 {
+						t.flush(buffer)
+					}
+					return
+				}
+			}
 		}
 	}
 }
@@ -130,8 +145,4 @@ func (t *Tracker) flushLoop() {
 func (t *Tracker) Shutdown() {
 	close(t.done)
 	t.wg.Wait()
-
-	t.mu.Lock()
-	t.flush()
-	t.mu.Unlock()
 }
