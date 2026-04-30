@@ -24,6 +24,19 @@ import (
 	"github.com/iimmutable/cc-modelrouter/internal/usage"
 )
 
+// eventually polls a condition until it becomes true or times out.
+func eventually(t *testing.T, timeout, interval time.Duration, condition func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return true
+		}
+		time.Sleep(interval)
+	}
+	return false
+}
+
 // routerAdapter adapts router.Engine to proxy.Router interface
 type routerAdapter struct {
 	engine *router.Engine
@@ -48,6 +61,9 @@ func (a *registryAdapter) Get(name string) (transformer.Transformer, error) {
 
 // TestUsageTrackingNonStreaming tests usage tracking with non-streaming requests
 func TestUsageTrackingNonStreaming(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	// Load test configuration
 	cfg, err := config.Load("../../.cc-modelrouter/test.config.json")
 	if err != nil {
@@ -135,8 +151,13 @@ func TestUsageTrackingNonStreaming(t *testing.T) {
 
 		t.Logf("Response usage: input=%d, output=%d", inputTokens, outputTokens)
 
-		// Give tracker time to flush
-		time.Sleep(200 * time.Millisecond)
+		// Wait for tracker to flush
+		if !eventually(t, 500*time.Millisecond, 50*time.Millisecond, func() bool {
+			records, _ := usage.GetRecordsByPeriod(db, "test-nonstreaming", time.Now().Add(-1*time.Minute), time.Now())
+			return len(records) > 0
+		}) {
+			t.Fatal("Timeout waiting for usage record to flush")
+		}
 
 		// Verify database record
 		records, err := usage.GetRecordsByPeriod(db, "test-nonstreaming", time.Now().Add(-1*time.Minute), time.Now())
@@ -169,6 +190,9 @@ func TestUsageTrackingNonStreaming(t *testing.T) {
 
 // TestUsageTrackingStreaming tests usage tracking with streaming requests
 func TestUsageTrackingStreaming(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	// Load test configuration
 	cfg, err := config.Load("../../.cc-modelrouter/test.config.json")
 	if err != nil {
@@ -253,8 +277,13 @@ func TestUsageTrackingStreaming(t *testing.T) {
 
 		t.Logf("Streaming response length: %d bytes", len(respBody))
 
-		// Give tracker time to flush
-		time.Sleep(200 * time.Millisecond)
+		// Wait for tracker to flush
+		if !eventually(t, 500*time.Millisecond, 50*time.Millisecond, func() bool {
+			records, _ := usage.GetRecordsByPeriod(db, "test-streaming", time.Now().Add(-1*time.Minute), time.Now())
+			return len(records) > 0
+		}) {
+			t.Fatal("Timeout waiting for usage record to flush")
+		}
 
 		// Verify database record
 		records, err := usage.GetRecordsByPeriod(db, "test-streaming", time.Now().Add(-1*time.Minute), time.Now())
@@ -286,6 +315,9 @@ func TestUsageTrackingStreaming(t *testing.T) {
 
 // TestUsageTrackingFallback tests usage tracking with provider fallback
 func TestUsageTrackingFallback(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	// Load test configuration
 	cfg, err := config.Load("../../.cc-modelrouter/test.config.json")
 	if err != nil {
@@ -357,8 +389,13 @@ func TestUsageTrackingFallback(t *testing.T) {
 			t.Fatalf("Expected status 200, got %d", w.Code)
 		}
 
-		// Give tracker time to flush
-		time.Sleep(200 * time.Millisecond)
+		// Wait for tracker to flush
+		if !eventually(t, 500*time.Millisecond, 50*time.Millisecond, func() bool {
+			records, _ := usage.GetRecordsByPeriod(db, "test-fallback", time.Now().Add(-1*time.Minute), time.Now())
+			return len(records) > 0
+		}) {
+			t.Fatal("Timeout waiting for usage record to flush")
+		}
 
 		// Verify database record
 		records, err := usage.GetRecordsByPeriod(db, "test-fallback", time.Now().Add(-1*time.Minute), time.Now())
@@ -383,6 +420,9 @@ func TestUsageTrackingFallback(t *testing.T) {
 
 // TestUsageTrackingConcurrent tests usage tracking with concurrent requests
 func TestUsageTrackingConcurrent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	// Load test configuration
 	cfg, err := config.Load("../../.cc-modelrouter/test.config.json")
 	if err != nil {
@@ -472,8 +512,14 @@ func TestUsageTrackingConcurrent(t *testing.T) {
 			t.Errorf("Request error: %v", err)
 		}
 
-		// Give tracker time to flush all records
-		time.Sleep(300 * time.Millisecond)
+		// Wait for tracker to flush all records
+		if !eventually(t, 500*time.Millisecond, 50*time.Millisecond, func() bool {
+			records, _ := usage.GetRecordsByPeriod(db, "test-concurrent", time.Now().Add(-1*time.Minute), time.Now())
+			return len(records) == numRequests
+		}) {
+			records, _ := usage.GetRecordsByPeriod(db, "test-concurrent", time.Now().Add(-1*time.Minute), time.Now())
+			t.Errorf("Expected %d usage records, got %d after timeout", numRequests, len(records))
+		}
 
 		// Verify database records
 		records, err := usage.GetRecordsByPeriod(db, "test-concurrent", time.Now().Add(-1*time.Minute), time.Now())
@@ -521,11 +567,16 @@ func TestUsageTrackingBufferedFlush(t *testing.T) {
 
 	// Add records
 	for i := 0; i < numRecords; i++ {
-		tracker.Record(instanceID, "test-route", "test-model", 100+i, 0)
+		tracker.Record(instanceID, "test-route", "test-model", "", "", 100+i, 0)
 	}
 
-	// Give time for flush to complete
-	time.Sleep(100 * time.Millisecond)
+	// Wait for flush to complete
+	if !eventually(t, 500*time.Millisecond, 50*time.Millisecond, func() bool {
+		records, _ := usage.GetRecordsByPeriod(db, instanceID, time.Now().Add(-1*time.Minute), time.Now())
+		return len(records) >= bufferSize
+	}) {
+		t.Fatalf("Timeout waiting for buffer flush")
+	}
 
 	// Check database - should have at least bufferSize records
 	records, err := usage.GetRecordsByPeriod(db, instanceID, time.Now().Add(-1*time.Minute), time.Now())

@@ -49,11 +49,13 @@ type mockTracker struct {
 	mu      sync.Mutex
 }
 
-func (m *mockTracker) Record(instanceID, route, model string, tokens, fallbacks int) {
+func (m *mockTracker) Record(instanceID, route, model, profile, provider string, tokens, fallbacks int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.records = append(m.records, &usage.Record{
 		InstanceID: instanceID,
+		Profile:    profile,
+		Provider:   provider,
 		Route:      route,
 		Model:      model,
 		Tokens:     tokens,
@@ -67,6 +69,9 @@ func (m *mockTracker) Shutdown() {
 }
 
 func TestIntegrationBasicRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	// Load test configuration
 	cfg, err := config.Load("../.cc-modelrouter/test.config.json")
 	if err != nil {

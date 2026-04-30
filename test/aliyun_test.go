@@ -22,6 +22,9 @@ import (
 
 // TestAliyunGLM47 tests a real API call to Aliyun DashScope using GLM-4.7
 func TestAliyunGLM47(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	cfg, err := loadAliyunConfig()
 	if err != nil {
 		t.Skipf("Test config not found: %v", err)
@@ -43,6 +46,9 @@ func TestAliyunGLM47(t *testing.T) {
 
 // TestAliyunGLM47Streaming tests streaming with Aliyun and GLM-4.7
 func TestAliyunGLM47Streaming(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	cfg, err := loadAliyunConfig()
 	if err != nil {
 		t.Skipf("Test config not found: %v", err)
@@ -65,6 +71,9 @@ func TestAliyunGLM47Streaming(t *testing.T) {
 
 // TestAliyunMiniMaxM25 tests a real API call to Aliyun DashScope using MiniMax-M2.5
 func TestAliyunMiniMaxM25(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	cfg, err := loadAliyunConfig()
 	if err != nil {
 		t.Skipf("Test config not found: %v", err)
@@ -86,6 +95,9 @@ func TestAliyunMiniMaxM25(t *testing.T) {
 
 // TestAliyunMiniMaxM25Streaming tests streaming with Aliyun and MiniMax-M2.5
 func TestAliyunMiniMaxM25Streaming(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	cfg, err := loadAliyunConfig()
 	if err != nil {
 		t.Skipf("Test config not found: %v", err)

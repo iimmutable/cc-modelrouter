@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/iimmutable/cc-modelrouter/internal/config"
@@ -22,10 +23,19 @@ const (
 	FilesAPIBetaVersion = "files-api-2025-04-14"
 )
 
+// Pre-allocated SSE byte slices to avoid repeated fmt.Sprintf allocations
+var (
+	sseEventPrefix   = []byte("event: ")
+	sseDataPrefix    = []byte("data: ")
+	sseNewline       = []byte("\n")
+	sseDoubleNewline = []byte("\n\n")
+)
+
 // Router interface for handler dependency.
 type Router interface {
 	DetectRoute(req router.RouteRequest) string
 	GetTargets(routeName string) []config.RouteTarget
+	SetActiveProfile(profile string)
 }
 
 // TransformerRegistry interface for handler dependency.
@@ -41,7 +51,7 @@ type HTTPClient interface {
 
 // UsageTracker interface for tracking usage statistics.
 type UsageTracker interface {
-	Record(instanceID, route, model string, tokens, fallbacks int)
+	Record(instanceID, route, model, profile, provider string, tokens, fallbacks int)
 }
 
 // Handler handles HTTP requests.
@@ -52,11 +62,14 @@ type Handler struct {
 	providerClients       map[string]HTTPClient
 	streamingClients      map[string]HTTPClient
 	config                *config.Config
+	configMu              sync.RWMutex // Protects config access during hot-reload
+	activeProfile         string      // Runtime state - current active profile (not from config)
 	usageTracker          UsageTracker
 	instanceID            string
 	requestInterceptors   []RequestInterceptor
 	responseInterceptors  []ResponseInterceptor
 	streamingInterceptors []StreamingResponseInterceptor
+	adminToken            string // Token for admin API authentication
 }
 
 // NewHandler creates a new handler.
@@ -119,6 +132,70 @@ func (h *Handler) SetStreamingInterceptors(interceptors []StreamingResponseInter
 	h.streamingInterceptors = interceptors
 }
 
+// SetAdminToken sets the admin API token.
+func (h *Handler) SetAdminToken(token string) {
+	h.adminToken = token
+}
+
+// GetAdminToken returns the admin API token.
+func (h *Handler) GetAdminToken() string {
+	return h.adminToken
+}
+
+// GetConfig returns the current configuration (thread-safe).
+func (h *Handler) GetConfig() *config.Config {
+	h.configMu.RLock()
+	defer h.configMu.RUnlock()
+	return h.config
+}
+
+// SetActiveProfile sets the initial active profile (called during initialization).
+func (h *Handler) SetActiveProfile(profile string) {
+	h.activeProfile = profile
+}
+
+// UpdateActiveProfile switches to a different profile without restart (hot-reload).
+// This is called by the admin API when a profile switch request is received.
+func (h *Handler) UpdateActiveProfile(profileName string) error {
+	h.configMu.Lock()
+	defer h.configMu.Unlock()
+
+	if h.config == nil {
+		return fmt.Errorf("config not initialized")
+	}
+
+	if len(h.config.Router.Profiles) == 0 {
+		return fmt.Errorf("no profiles configured")
+	}
+
+	if _, ok := h.config.Router.Profiles[profileName]; !ok {
+		return fmt.Errorf("profile not found: %s", profileName)
+	}
+
+	h.activeProfile = profileName
+	// Also update the router engine's active profile
+	if h.router != nil {
+		h.router.SetActiveProfile(profileName)
+	}
+	logging.Infof("[ADMIN] Switched to profile: %s", profileName)
+	return nil
+}
+
+// GetActiveProfile returns the current active profile name (thread-safe).
+func (h *Handler) GetActiveProfile() string {
+	return h.activeProfile
+}
+
+// GetProfiles returns all configured profiles (thread-safe).
+func (h *Handler) GetProfiles() map[string]config.ProfileConfig {
+	h.configMu.RLock()
+	defer h.configMu.RUnlock()
+	if h.config == nil {
+		return nil
+	}
+	return h.config.Router.Profiles
+}
+
 // AddRequestInterceptor adds a single request interceptor.
 func (h *Handler) AddRequestInterceptor(interceptor RequestInterceptor) {
 	h.requestInterceptors = append(h.requestInterceptors, interceptor)
@@ -143,6 +220,8 @@ func (h *Handler) AddStreamingInterceptor(interceptor StreamingResponseIntercept
 //
 // The deep copy is created using JSON marshal/unmarshal which ensures all
 // nested structures (Messages, ContentBlocks, etc.) are independent copies.
+// Note: gob encoding was benchmarked but found to be ~30% slower than JSON
+// on this platform (see deepcopy_test.go benchmarks).
 func deepCopyRequest(req *anthropic.Request) (*anthropic.Request, error) {
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
@@ -157,6 +236,17 @@ func deepCopyRequest(req *anthropic.Request) (*anthropic.Request, error) {
 
 // ServeHTTP handles HTTP requests.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Handle admin API endpoints (profile management)
+	if strings.HasPrefix(r.URL.Path, "/_admin/") {
+		if h.adminToken == "" {
+			http.Error(w, "Admin API not initialized", http.StatusServiceUnavailable)
+			return
+		}
+		adminHandler := NewAdminHandler(h)
+		adminHandler.ServeHTTP(w, r)
+		return
+	}
+
 	// Supported Anthropic API v1 endpoints
 	supportedPaths := []string{
 		"/v1/messages",
@@ -311,7 +401,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request, req *an
 				logging.Infof("[USAGE] Tracking actual usage: %d tokens (input=%d, output=%d)",
 					totalTokens, resp.Usage.InputTokens, resp.Usage.OutputTokens)
 			}
-			h.usageTracker.Record(h.instanceID, routeName, successfulModel, totalTokens, i)
+			h.usageTracker.Record(h.instanceID, routeName, successfulModel, h.activeProfile, target.Provider, totalTokens, i)
 		}
 
 		// Log response details
@@ -404,7 +494,7 @@ func (h *Handler) handleStreaming(w http.ResponseWriter, r *http.Request, req *a
 			} else {
 				logging.Streamf("[USAGE] Tracking actual usage: %d tokens", tokensToTrack)
 			}
-			h.usageTracker.Record(h.instanceID, routeName, target.Model, tokensToTrack, i)
+			h.usageTracker.Record(h.instanceID, routeName, target.Model, h.activeProfile, target.Provider, tokensToTrack, i)
 		}
 		logging.Streamf("Stream completed with %s/%s, fallbacks: %d", target.Provider, target.Model, i)
 		return
@@ -420,10 +510,12 @@ func (h *Handler) sendStreamingError(w http.ResponseWriter, message string, err 
 
 	// Anthropic's SSE error format
 	errorJSON := fmt.Sprintf("{\"type\": \"error\", \"error\": {\"type\": \"api_error\", \"message\": \"%s: %s\"}}", message, err)
-	w.Write([]byte("event: error\n"))
-	w.Write([]byte("data: "))
+	w.Write(sseEventPrefix)
+	w.Write([]byte("error"))
+	w.Write(sseNewline)
+	w.Write(sseDataPrefix)
 	w.Write([]byte(errorJSON))
-	w.Write([]byte("\n\n"))
+	w.Write(sseDoubleNewline)
 
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
@@ -648,6 +740,7 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 	// because providers like GLM already send these events. Emitting synthetic ones
 	// would cause duplicate events that break the client's parsing.
 	scanner := NewSSEScanner(resp.Body)
+	defer scanner.Close()
 
 	eventCount := 0
 	var totalOutputTokens int
@@ -762,12 +855,6 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 				}
 			}
 
-			// Re-validate after interceptor processing
-			if !json.Valid(interceptedData) {
-				logging.StreamDebugf("[FILTER] Skipping invalid JSON after interceptor, type: %s", te.EventType)
-				continue
-			}
-
 			// Semantic validation for critical event types to prevent
 			// "undefined is not an object" errors in client JavaScript
 			var parsedEvent map[string]any
@@ -794,12 +881,14 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 
 			// Determine event format based on event type
 			if te.EventType != "" {
-				// Write event with explicit event type
-				w.Write([]byte(fmt.Sprintf("event: %s\n", te.EventType)))
+				// Write event with explicit event type (direct byte writes, no fmt.Sprintf)
+				w.Write(sseEventPrefix)
+				w.Write([]byte(te.EventType))
+				w.Write(sseNewline)
 			}
-			w.Write([]byte("data: "))
+			w.Write(sseDataPrefix)
 			w.Write(interceptedData)
-			w.Write([]byte("\n\n"))
+			w.Write(sseDoubleNewline)
 			flusher.Flush()
 
 			// DEBUG: Log successfully written event
@@ -817,10 +906,12 @@ func (h *Handler) tryStreamingTarget(ctx context.Context, w http.ResponseWriter,
 		if err != nil {
 			logging.Errorf("[STREAM] Failed to marshal message_stop event: %v", err)
 		} else if len(messageStopData) > 0 {
-			w.Write([]byte("event: message_stop\n"))
-			w.Write([]byte("data: "))
+			w.Write(sseEventPrefix)
+			w.Write([]byte("message_stop"))
+			w.Write(sseNewline)
+			w.Write(sseDataPrefix)
 			w.Write(messageStopData)
-			w.Write([]byte("\n\n"))
+			w.Write(sseDoubleNewline)
 			flusher.Flush()
 		}
 		return 0, scanner.Err()

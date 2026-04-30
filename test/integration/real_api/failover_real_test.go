@@ -34,7 +34,7 @@ type failoverRecord struct {
 	Fallbacks  int
 }
 
-func (m *failoverTracker) Record(instanceID, route, model string, tokens, fallbacks int) {
+func (m *failoverTracker) Record(instanceID, route, model, profile, provider string, tokens, fallbacks int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.records = append(m.records, &failoverRecord{
@@ -340,7 +340,7 @@ type accuracyRecord struct {
 	Tokens     int
 }
 
-func (m *accuracyTracker) Record(instanceID, route, model string, tokens, fallbacks int) {
+func (m *accuracyTracker) Record(instanceID, route, model, profile, provider string, tokens, fallbacks int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.records = append(m.records, &accuracyRecord{

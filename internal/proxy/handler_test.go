@@ -54,6 +54,10 @@ func (m *mockRouter) GetTargets(routeName string) []config.RouteTarget {
 	}
 }
 
+func (m *mockRouter) SetActiveProfile(profile string) {
+	// No-op for mock
+}
+
 type mockTransformerRegistry struct {
 	transformers map[string]transformer.Transformer
 }
@@ -131,15 +135,19 @@ type mockRecord struct {
 	instanceID string
 	route      string
 	model      string
+	profile    string
+	provider   string
 	tokens     int
 	fallbacks  int
 }
 
-func (m *mockUsageTracker) Record(instanceID, route, model string, tokens, fallbacks int) {
+func (m *mockUsageTracker) Record(instanceID, route, model, profile, provider string, tokens, fallbacks int) {
 	m.records = append(m.records, mockRecord{
 		instanceID: instanceID,
 		route:      route,
 		model:      model,
+		profile:    profile,
+		provider:   provider,
 		tokens:     tokens,
 		fallbacks:  fallbacks,
 	})
@@ -1699,4 +1707,90 @@ func TestHandleMessages_UsageTrackingWithActualData(t *testing.T) {
 	}
 
 	t.Logf("SUCCESS: Usage tracking used actual provider data: %d tokens", record.tokens)
+}
+
+// --- UpdateActiveProfile error path tests ---
+
+func TestHandler_UpdateActiveProfile_NilConfig(t *testing.T) {
+	handler := NewHandler(10 * 1024 * 1024)
+	// Don't set config — it remains nil
+
+	err := handler.UpdateActiveProfile("fast")
+	if err == nil {
+		t.Fatal("expected error for nil config")
+	}
+	if err.Error() != "config not initialized" {
+		t.Errorf("expected 'config not initialized' error, got: %v", err)
+	}
+}
+
+func TestHandler_UpdateActiveProfile_NoProfiles(t *testing.T) {
+	handler := NewHandler(10 * 1024 * 1024)
+	handler.SetConfig(&config.Config{
+		Router: config.RouterConfig{
+			Profiles: map[string]config.ProfileConfig{}, // Empty
+		},
+	})
+
+	err := handler.UpdateActiveProfile("fast")
+	if err == nil {
+		t.Fatal("expected error for no profiles")
+	}
+	if err.Error() != "no profiles configured" {
+		t.Errorf("expected 'no profiles configured' error, got: %v", err)
+	}
+}
+
+func TestHandler_UpdateActiveProfile_ProfileNotFound(t *testing.T) {
+	handler := NewHandler(10 * 1024 * 1024)
+	handler.SetConfig(&config.Config{
+		Router: config.RouterConfig{
+			Profiles: map[string]config.ProfileConfig{
+				"fast": {Name: "Fast", Routes: map[string]string{"default": "p:m"}},
+			},
+		},
+	})
+
+	err := handler.UpdateActiveProfile("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for profile not found")
+	}
+	if !strings.Contains(err.Error(), "profile not found") {
+		t.Errorf("expected 'profile not found' error, got: %v", err)
+	}
+}
+
+func TestHandler_GetProfiles_NilConfig(t *testing.T) {
+	handler := NewHandler(10 * 1024 * 1024)
+	// Don't set config
+
+	profiles := handler.GetProfiles()
+	if profiles != nil {
+		t.Errorf("expected nil profiles for nil config, got %v", profiles)
+	}
+}
+
+func TestHandler_SetActiveProfile_GetActiveProfile(t *testing.T) {
+	handler := NewHandler(10 * 1024 * 1024)
+
+	handler.SetActiveProfile("test-profile")
+	if got := handler.GetActiveProfile(); got != "test-profile" {
+		t.Errorf("expected 'test-profile', got '%s'", got)
+	}
+}
+
+func TestServeHTTP_AdminNotInitialized(t *testing.T) {
+	handler := NewHandler(10 * 1024 * 1024)
+	// Don't set admin token — should return 503
+
+	req := httptest.NewRequest(http.MethodGet, "/_admin/profiles", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected status 503, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Admin API not initialized") {
+		t.Errorf("expected 'Admin API not initialized' in body, got: %s", w.Body.String())
+	}
 }

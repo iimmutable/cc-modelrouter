@@ -22,6 +22,9 @@ import (
 
 // TestOpenRouterClaudeSonnet45 tests a real API call to OpenRouter using Claude Sonnet 4.5
 func TestOpenRouterClaudeSonnet45(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	// Load test configuration
 	cfg, err := config.Load("../.cc-modelrouter/openrouter-test.config.json")
 	if err != nil {
@@ -140,6 +143,9 @@ func TestOpenRouterClaudeSonnet45(t *testing.T) {
 
 // TestOpenRouterClaudeSonnet45Streaming tests streaming with OpenRouter and Claude Sonnet 4.5
 func TestOpenRouterClaudeSonnet45Streaming(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
 	// Load test configuration
 	cfg, err := config.Load("../.cc-modelrouter/openrouter-test.config.json")
 	if err != nil {
