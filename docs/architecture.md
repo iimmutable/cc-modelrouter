@@ -303,3 +303,25 @@ logging.Debugf("Headers: %s", logging.SanitizeHeadersString(req.Header))
 ```
 
 See `docs/security/secret-handling.md` for detailed documentation.
+
+### Environment Variable Interpolation
+
+API keys and other sensitive values use `${VAR_NAME}` syntax in configuration files. Values are resolved at load time from the process environment — secrets are never written to disk in plaintext.
+
+```json
+{
+  "providers": {
+    "openrouter": {
+      "apiKey": "${CCROUTER_OPENROUTER_API_KEY}"
+    }
+  }
+}
+```
+
+### Request Size Limits
+
+The proxy enforces a default maximum request body size (50 MB) to protect against oversized payloads. Per-provider overrides are available via the `maxRequestBodyBytes` configuration option.
+
+### Admin API Protection
+
+Runtime profile management endpoints (switch, status) are secured with generated bearer tokens. See `docs/configuration.md` for token configuration.
