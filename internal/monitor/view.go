@@ -13,9 +13,14 @@ import (
 // Adaptive layout styles - Catppuccin Mocha Theme
 var (
 	// Column width ratios for consistent table alignment
-	requestsColRatio = 0.24 // Requests: 24%
-	tokensColRatio   = 0.24 // Tokens: 24% (same width as Requests)
-	fbacksColRatio   = 0.14 // Fbacks: 14% (smaller than Requests)
+	// Calculate base unit to ensure alignment between BY ROUTE (4 cols) and BY MODEL (3 cols) tables
+	// BY ROUTE: Route + Fbacks + Requests + Tokens
+	// BY MODEL: Model + Requests + Tokens
+	// We need Requests and Tokens to be the same width in both tables
+	baseColRatio   = 0.19 // Base unit for proportional columns (approximate)
+	requestsColRatio = baseColRatio // Requests: 19%
+	tokensColRatio   = baseColRatio // Tokens: 19% (same width as Requests)
+	fbacksColRatio   = baseColRatio // Fbacks: 19% (same width as Requests/Tokens)
 
 	// Box styles with dynamic width
 	DynamicBoxStyle = lipgloss.NewStyle().
@@ -164,32 +169,46 @@ func (m *MonitorModel) renderContent() string {
 		rightBorder,
 	)
 
-	return content + "\n"
+	return content
 }
 
-// renderRouteTable renders the BY ROUTE section
+// renderRouteTable renders the BY ROUTE section with profile grouping
 func (m *MonitorModel) renderRouteTable(width int) string {
 	// Defensive: ensure minimum width
 	if width < 18 {
 		width = 18
 	}
 
-	// Calculate column widths using consistent ratios
-	reqColWidth := int(float64(width) * requestsColRatio) // 24%
+	// Calculate column widths ensuring consistent alignment with BY MODEL table
+	// BY ROUTE has 4 columns: Route + Fbacks + Requests + Tokens
+	// We want to make sure the Requests and Tokens columns align with the BY MODEL table
+	reqColWidth := int(float64(width) * requestsColRatio)
 	if reqColWidth < 8 {
 		reqColWidth = 8
 	}
-	tokenColWidth := int(float64(width) * tokensColRatio) // 24%
+	tokenColWidth := int(float64(width) * tokensColRatio)
 	if tokenColWidth < 8 {
 		tokenColWidth = 8
 	}
-	fallbackColWidth := int(float64(width) * fbacksColRatio) // 14%
+	fallbackColWidth := int(float64(width) * fbacksColRatio)
 	if fallbackColWidth < 6 {
 		fallbackColWidth = 6
 	}
-	routeColWidth := width - reqColWidth - tokenColWidth - fallbackColWidth // 38%
+
+	// Calculate route column width as remainder
+	routeColWidth := width - (reqColWidth + tokenColWidth + fallbackColWidth)
 	if routeColWidth < 10 {
-		routeColWidth = 10
+		// Adjust other columns proportionally if route column is too small
+		totalFixed := 10 + 6 + 8 + 8 // min route + min fallback + min req + min token
+		if width > totalFixed {
+			extra := width - totalFixed
+			routeColWidth = 10 + int(float64(extra)*0.4)      // 40% of extra to route
+			fallbackColWidth = 6 + int(float64(extra)*0.15)   // 15% of extra to fallback
+			reqColWidth = 8 + int(float64(extra)*0.225)       // ~22.5% to req
+			tokenColWidth = 8 + int(float64(extra)*0.225)     // ~22.5% to token
+		} else {
+			routeColWidth = 10
+		}
 	}
 
 	title := TableHeaderCellStyle.Render(fmt.Sprintf(" BY ROUTE "))
@@ -200,8 +219,8 @@ func (m *MonitorModel) renderRouteTable(width int) string {
 
 	var rows []string
 
-	// Header row - empty first column (Route/Model omitted for cleaner look)
-	headerRow := strings.Repeat(" ", routeColWidth) +
+	// Header row - title and column headers on one line
+	headerRow := TableHeaderCellStyle.Width(routeColWidth).Align(lipgloss.Left).Render(" BY ROUTE ") +
 		TableHeaderCellStyle.Width(fallbackColWidth).Align(lipgloss.Right).Render("Fbacks") +
 		TableHeaderCellStyle.Width(reqColWidth).Align(lipgloss.Right).Render("Requests") +
 		TableHeaderCellStyle.Width(tokenColWidth).Align(lipgloss.Right).Render("Tokens")
@@ -211,23 +230,43 @@ func (m *MonitorModel) renderRouteTable(width int) string {
 	sep := strings.Repeat("─", width)
 	rows = append(rows, sep)
 
-	// Sort routes alphabetically
+	// Sort routes by (Profile, Route) for hierarchical rendering
 	routes := make([]*usage.RouteStats, 0, len(m.Stats.ByRoute))
 	for _, stats := range m.Stats.ByRoute {
 		routes = append(routes, stats)
 	}
 	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Profile != routes[j].Profile {
+			return routes[i].Profile < routes[j].Profile
+		}
 		return routes[i].Route < routes[j].Route
 	})
 
+	prevProfile := ""
 	for i, route := range routes {
+		// Render profile header row when profile changes
+		if route.Profile != prevProfile {
+			if route.Profile != "" {
+				// Add 1-space prefix to align with header text, profile group label
+				profileHeader := TableHeaderCellStyle.Width(routeColWidth).Align(lipgloss.Left).Render(" " + route.Profile)
+				rows = append(rows, profileHeader)
+			}
+			prevProfile = route.Profile
+		}
+
 		// Use uncolored style for data cells - apply color per-cell
 		cellStyle := TableCellStyle
 		if i%2 == 1 {
 			cellStyle = TableCellAltStyle
 		}
 
-		routeCell := cellStyle.Width(routeColWidth).Render(truncate(route.Route, routeColWidth))
+		prefix := ""
+		if route.Profile != "" {
+			prefix = "   " // 3-space indent under profile group
+		}
+		displayRoute := prefix + route.Route
+
+		routeCell := cellStyle.Width(routeColWidth).Render(truncate(displayRoute, routeColWidth))
 		fallbackCell := m.flashStyle("route:"+route.Route+":fallbacks", cellStyle).Width(fallbackColWidth).Align(lipgloss.Right).Render(fmt.Sprintf("%d", route.Fallbacks))
 		reqCell := m.flashStyle("route:"+route.Route+":requests", cellStyle).Width(reqColWidth).Align(lipgloss.Right).Render(formatNumber(route.Requests))
 		tokenCell := m.flashStyle("route:"+route.Route+":tokens", cellStyle).Width(tokenColWidth).Align(lipgloss.Right).Render(formatTokens(route.Tokens))
@@ -235,28 +274,41 @@ func (m *MonitorModel) renderRouteTable(width int) string {
 		rows = append(rows, routeCell+fallbackCell+reqCell+tokenCell)
 	}
 
-	return title + "\n" + strings.Join(rows, "\n")
+	return strings.Join(rows, "\n")
 }
 
-// renderModelTable renders the BY MODEL section
+// renderModelTable renders the BY MODEL section with profile grouping
 func (m *MonitorModel) renderModelTable(width int) string {
 	// Defensive: ensure minimum width
 	if width < 17 {
 		width = 17
 	}
 
-	// Calculate column widths using consistent ratios
-	reqColWidth := int(float64(width) * requestsColRatio) // 24%
+	// Calculate column widths ensuring consistent alignment with BY ROUTE table
+	// BY MODEL has 3 columns: Model + Requests + Tokens
+	// We want the Requests and Tokens columns to align with BY ROUTE table
+	reqColWidth := int(float64(width) * requestsColRatio)
 	if reqColWidth < 8 {
 		reqColWidth = 8
 	}
-	tokenColWidth := int(float64(width) * tokensColRatio) // 24%
+	tokenColWidth := int(float64(width) * tokensColRatio)
 	if tokenColWidth < 8 {
 		tokenColWidth = 8
 	}
-	modelColWidth := width - reqColWidth - tokenColWidth // 52%
+
+	// Calculate model column width as remainder - ensure it aligns with route column from BY ROUTE
+	modelColWidth := width - reqColWidth - tokenColWidth
 	if modelColWidth < 12 {
-		modelColWidth = 12
+		// Adjust other columns proportionally if model column is too small
+		totalFixed := 12 + 8 + 8 // min model + min req + min token
+		if width > totalFixed {
+			extra := width - totalFixed
+			modelColWidth = 12 + int(float64(extra)*0.4)  // 40% of extra to model
+			reqColWidth = 8 + int(float64(extra)*0.3)     // 30% to req
+			tokenColWidth = 8 + int(float64(extra)*0.3)   // 30% to token
+		} else {
+			modelColWidth = 12
+		}
 	}
 
 	title := TableHeaderCellStyle.Render(fmt.Sprintf(" BY MODEL "))
@@ -267,8 +319,9 @@ func (m *MonitorModel) renderModelTable(width int) string {
 
 	var rows []string
 
-	// Header row - empty first column (Model omitted for cleaner look)
-	headerRow := strings.Repeat(" ", modelColWidth) +
+	// Header row - title and column headers on one line
+	// This ensures the Model column header aligns with the Route column header from BY ROUTE
+	headerRow := TableHeaderCellStyle.Width(modelColWidth).Align(lipgloss.Left).Render(" BY MODEL ") +
 		TableHeaderCellStyle.Width(reqColWidth).Align(lipgloss.Right).Render("Requests") +
 		TableHeaderCellStyle.Width(tokenColWidth).Align(lipgloss.Right).Render("Tokens")
 	rows = append(rows, headerRow)
@@ -277,29 +330,49 @@ func (m *MonitorModel) renderModelTable(width int) string {
 	sep := strings.Repeat("─", width)
 	rows = append(rows, sep)
 
-	// Sort models by token count descending
+	// Sort models by (Profile, Tokens desc) for hierarchical rendering
 	models := make([]*usage.ModelStats, 0, len(m.Stats.ByModel))
 	for _, stats := range m.Stats.ByModel {
 		models = append(models, stats)
 	}
 	sort.Slice(models, func(i, j int) bool {
+		if models[i].Profile != models[j].Profile {
+			return models[i].Profile < models[j].Profile
+		}
 		return models[i].Tokens > models[j].Tokens
 	})
 
+	prevProfile := ""
 	for i, model := range models {
+		// Render profile header row when profile changes
+		if model.Profile != prevProfile {
+			if model.Profile != "" {
+				// Add 1-space prefix to align with header text, profile group label
+				profileHeader := TableHeaderCellStyle.Width(modelColWidth).Align(lipgloss.Left).Render(" " + model.Profile)
+				rows = append(rows, profileHeader)
+			}
+			prevProfile = model.Profile
+		}
+
 		cellStyle := TableCellStyle
 		if i%2 == 1 {
 			cellStyle = TableCellAltStyle
 		}
 
-		modelCell := cellStyle.Width(modelColWidth).Render(truncate(model.Model, modelColWidth))
+		prefix := ""
+		if model.Profile != "" {
+			prefix = "   " // 3-space indent under profile group
+		}
+		displayModel := prefix + model.Model
+
+		modelCell := cellStyle.Width(modelColWidth).Render(truncate(displayModel, modelColWidth))
 		reqCell := m.flashStyle("model:"+model.Model+":requests", cellStyle).Width(reqColWidth).Align(lipgloss.Right).Render(formatNumber(model.Requests))
 		tokenCell := m.flashStyle("model:"+model.Model+":tokens", cellStyle).Width(tokenColWidth).Align(lipgloss.Right).Render(formatTokens(model.Tokens))
 
 		rows = append(rows, modelCell+reqCell+tokenCell)
 	}
 
-	return title + "\n" + strings.Join(rows, "\n")
+	return strings.Join(rows, "\n")
 }
 
 // renderInstanceList renders the INSTANCES panel

@@ -732,39 +732,39 @@ func splitLogLine(s string) []string {
 	return parts
 }
 
-// Styles - Light Theme (Dracula-inspired light variant)
-// A clean, minimalist TUI with light background and dark text for high contrast
+// Styles - Adaptive Theme (light/dark auto-detection via lipgloss.HasDarkBackground)
+// Light: Dracula-inspired light variant | Dark: Catppuccin Mocha
 
 // Base palette colors
 var (
-	// Background colors (light theme)
-	BaseBackground   = lipgloss.Color("#f8f8f2") // Main background (cream)
-	PanelBackground  = lipgloss.Color("#ffffff") // Panel backgrounds (white)
-	AltRowBackground = lipgloss.Color("#eff0eb") // Alternate row (light gray)
+	// Background colors
+	BaseBackground   = lipgloss.AdaptiveColor{Light: "#f8f8f2", Dark: "#1e1e2e"} // Main background
+	PanelBackground  = lipgloss.AdaptiveColor{Light: "#ffffff", Dark: "#313244"} // Panel backgrounds
+	AltRowBackground = lipgloss.AdaptiveColor{Light: "#eff0eb", Dark: "#45475a"} // Alternate row
 
-	// Text colors (dark for contrast)
-	PrimaryText   = lipgloss.Color("#282a36") // Main text (dark)
-	SecondaryText = lipgloss.Color("#6272a4") // Secondary/muted (medium gray)
-	HeaderText    = lipgloss.Color("#bd93f9") // Headers (purple)
+	// Text colors
+	PrimaryText   = lipgloss.AdaptiveColor{Light: "#282a36", Dark: "#cdd6f4"} // Main text
+	SecondaryText = lipgloss.AdaptiveColor{Light: "#6272a4", Dark: "#a6adc8"} // Secondary/muted
+	HeaderText    = lipgloss.AdaptiveColor{Light: "#bd93f9", Dark: "#cba6f7"} // Headers
 
 	// Accent colors
-	SelectionAccent = lipgloss.Color("#8be9fd") // Selected items (cyan)
-	BorderColor     = lipgloss.Color("#44475a") // Borders (light gray)
+	SelectionAccent = lipgloss.AdaptiveColor{Light: "#8be9fd", Dark: "#89b4fa"} // Selected items
+	BorderColor     = lipgloss.AdaptiveColor{Light: "#44475a", Dark: "#585b70"} // Borders
 
 	// Status colors
-	SuccessColor = lipgloss.Color("#2e7d32") // Running/success (green)
-	ErrorColor   = lipgloss.Color("#c62828") // Errors (dark red)
-	WarningColor = lipgloss.Color("#e65100") // Warnings (dark amber)
-	InfoColor    = lipgloss.Color("#1565c0") // Info (blue)
-	DebugColor   = lipgloss.Color("#546e7a") // Debug (slate)
-	TraceColor   = lipgloss.Color("#7b1fa2") // Trace (purple)
-	VerboseColor = lipgloss.Color("#00796b") // Verbose (teal)
+	SuccessColor = lipgloss.AdaptiveColor{Light: "#2e7d32", Dark: "#a6e3a1"} // Running/success
+	ErrorColor   = lipgloss.AdaptiveColor{Light: "#c62828", Dark: "#f38ba8"} // Errors
+	WarningColor = lipgloss.AdaptiveColor{Light: "#e65100", Dark: "#fab387"} // Warnings
+	InfoColor    = lipgloss.AdaptiveColor{Light: "#1565c0", Dark: "#89b4fa"} // Info
+	DebugColor   = lipgloss.AdaptiveColor{Light: "#546e7a", Dark: "#6c7086"} // Debug
+	TraceColor   = lipgloss.AdaptiveColor{Light: "#7b1fa2", Dark: "#f5c2e7"} // Trace
+	VerboseColor = lipgloss.AdaptiveColor{Light: "#00796b", Dark: "#94e2d5"} // Verbose
 
 	// Semantic color aliases (for clarity in usage)
 	PrimaryAccent     = SelectionAccent // Cyan for selections
 	SecondaryAccent   = HeaderText      // Purple for headers
 	MutedColor        = SecondaryText   // Medium gray for muted text
-	BackgroundColor   = BaseBackground  // Cream background
+	BackgroundColor   = BaseBackground  // Main background
 	StatusBarBackground = BaseBackground // Same as main (no dark bar)
 	SelectedBackground  = SelectionAccent // Cyan selection
 
@@ -775,8 +775,8 @@ var (
 	AccentStyle  = lipgloss.NewStyle().Foreground(PrimaryAccent)
 
 	// Flash animation styles
-	FlashHighlightBg = lipgloss.Color("#8be9fd") // bright cyan
-	FlashFadeBg      = lipgloss.Color("#e0f4fd") // light cyan
+	FlashHighlightBg = lipgloss.AdaptiveColor{Light: "#8be9fd", Dark: "#45475a"} // bright cyan / dark overlay
+	FlashFadeBg      = lipgloss.AdaptiveColor{Light: "#e0f4fd", Dark: "#313244"} // light cyan / panel bg
 	FlashHighlightStyle = lipgloss.NewStyle().Background(FlashHighlightBg).Bold(true).Foreground(PrimaryText)
 	FlashFadeStyle      = lipgloss.NewStyle().Background(FlashFadeBg).Foreground(PrimaryText)
 
@@ -826,13 +826,13 @@ var (
 	ConsoleTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(PrimaryAccent)
 
 	LogLevelStyles = map[LogLevel]lipgloss.Style{
-		LogLevelVerbs: lipgloss.NewStyle().Foreground(VerboseColor), // #00796b - teal
-		LogLevelTrace: lipgloss.NewStyle().Foreground(TraceColor),   // #7b1fa2 - purple
-		LogLevelDebug: lipgloss.NewStyle().Foreground(DebugColor),   // #546e7a - slate
-		LogLevelInfo:  lipgloss.NewStyle().Foreground(InfoColor),    // #1565c0 - blue
-		LogLevelWarn:  lipgloss.NewStyle().Foreground(WarningColor), // #e65100 - dark amber
-		LogLevelError: lipgloss.NewStyle().Foreground(ErrorColor),   // #c62828 - dark red
-		LogLevelFatal: lipgloss.NewStyle().Foreground(lipgloss.Color("#880e4f")).Bold(true), // #880e4f - dark crimson + bold
+		LogLevelVerbs: lipgloss.NewStyle().Foreground(VerboseColor), // teal
+		LogLevelTrace: lipgloss.NewStyle().Foreground(TraceColor),   // purple
+		LogLevelDebug: lipgloss.NewStyle().Foreground(DebugColor),   // slate
+		LogLevelInfo:  lipgloss.NewStyle().Foreground(InfoColor),    // blue
+		LogLevelWarn:  lipgloss.NewStyle().Foreground(WarningColor), // dark amber / peach
+		LogLevelError: lipgloss.NewStyle().Foreground(ErrorColor),   // red
+		LogLevelFatal: lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#880e4f", Dark: "#f38ba8"}).Bold(true), // crimson + bold
 	}
 )
 
