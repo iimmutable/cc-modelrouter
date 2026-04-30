@@ -17,37 +17,20 @@ This document describes the design of the usage tracking feature for `cc-modelro
 
 ## CLI Interface
 
+Usage statistics are viewed through the live terminal UI:
+
+```bash
+ccrouter monitor
 ```
-ccrouter usage [instance-id] [period]
-```
 
-### Arguments
-
-| Argument | Type | Required | Description |
-|----------|------|----------|-------------|
-| `instance-id` | string | No | Filter to specific instance (omit for aggregate) |
-| `period` | string | No | Time period filter (default: `all-time`) |
-
-### Period Options
-
-| Value | Description |
-|-------|-------------|
-| `all-time` | All records (default) |
-| `today` | Current calendar day |
-| `this-week` | Current week (Mon-Sun) |
-| `last-week` | Previous week |
-| `this-month` | Current calendar month |
-| `last-month` | Previous calendar month |
-| `this-quarter` | Current quarter (Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec) |
-| `last-quarter` | Previous quarter |
-| `this-year` | Current calendar year |
-| `last-year` | Previous calendar year |
-| `YYYYMMDD-YYYYMMDD` | Custom date range |
+See [CLI Reference - monitor](cli-reference.md#ccrouter-monitor) for details and flags.
 
 ### Output Format
 
+The monitor dashboard displays:
+
 ```
-Usage Summary (all-time, all instances)
+Usage Summary (TODAY, all instances)
   Requests: 1,234  |  Tokens: 45.6M  |  Fallbacks: 12
 
 By Route:
@@ -129,7 +112,6 @@ Records are buffered in memory and flushed to SQLite when either:
 | `internal/usage/stats.go` | Aggregation logic (by route, model, period) |
 | `internal/usage/formatter.go` | Output formatting, token number formatting |
 | `internal/usage/period.go` | Period parsing to time range |
-| `internal/cli/usage.go` | CLI command registration and handler |
 
 ## Token Number Formatting
 
@@ -169,12 +151,4 @@ Register the `usage` subcommand in `internal/cli/root.go`.
 
 ---
 
-## Live Usage Monitor
-
-In addition to the `ccrouter usage` command, a live terminal UI is available:
-
-```bash
-ccrouter monitor
-```
-
-See [CLI Reference - monitor](cli-reference.md#ccrouter-monitor) for details.
+## Future Considerations

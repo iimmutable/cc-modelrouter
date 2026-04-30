@@ -82,7 +82,12 @@ cc-modelrouter/
 ├── internal/
 │   ├── cli/
 │   │   ├── adapters_test.go            # White-box CLI adapter tests (7)
-│   │   └── root_test.go                # White-box CLI root tests (19)
+│   │   ├── clean_test.go               # White-box clean command tests (7)
+│   │   ├── code_profile_test.go        # White-box profile slash command tests (1)
+│   │   ├── profile_integration_test.go # White-box profile integration tests (7)
+│   │   ├── profile_test.go             # White-box profile command tests (43)
+│   │   ├── root_test.go                # White-box CLI root tests (19)
+│   │   └── status_test.go              # White-box status command tests (3)
 │   ├── config/
 │   │   ├── loader_test.go              # White-box config loading tests (2)
 │   │   ├── types_test.go               # White-box config type tests (3)
@@ -90,6 +95,7 @@ cc-modelrouter/
 │   │       └── loglevel_test.go        # Black-box log level tests (3)
 │   ├── configwizard/
 │   │   ├── connectivity_test.go        # White-box connectivity tests (22)
+│   │   ├── profile_test.go             # White-box profile wizard tests (23)
 │   │   ├── shell_test.go              # White-box shell config tests
 │   │   └── wizard_test.go              # White-box wizard model tests (75)
 │   ├── daemon/
@@ -117,6 +123,8 @@ cc-modelrouter/
 │   ├── proxy/
 │   │   ├── beta_header_test.go         # White-box beta header tests (1)
 │   │   ├── compactor_test.go           # White-box compactor tests (9)
+│   │   ├── admin_handler_test.go       # White-box admin handler tests (15)
+│   │   ├── deepcopy_test.go            # White-box deep copy tests (10)
 │   │   ├── error1213_repro_test.go     # White-box error 1213 repro tests (5)
 │   │   ├── files_handler_test.go       # White-box files API tests (5)
 │   │   ├── handler_image_test.go       # White-box image handling tests (7)
@@ -126,7 +134,7 @@ cc-modelrouter/
 │   │   ├── streaming_test.go           # White-box streaming tests (26)
 │   │   └── streaming_timeout_test.go   # White-box streaming timeout tests (2)
 │   ├── router/
-│   │   ├── engine_test.go              # White-box route detection tests (7)
+│   │   ├── engine_test.go              # White-box route detection tests (15)
 │   │   └── failover_test.go            # White-box failover tests (4)
 │   ├── transformer/
 │   │   ├── base_test.go                # White-box base transformer tests (7)
@@ -138,6 +146,7 @@ cc-modelrouter/
 │   │       ├── anthropic_transformer_test.go     # White-box Anthropic tests (2)
 │   │       ├── bigmodel_debug_test.go           # White-box BigModel debug tests (5)
 │   │       ├── content_block_test.go            # White-box content block tests (1)
+│   │       ├── gemini_test.go                   # White-box Gemini transformer tests (22)
 │   │       ├── glm_truncation_test.go           # White-box GLM truncation tests (1)
 │   │       ├── image_streaming_test.go          # White-box image streaming tests (7)
 │   │       ├── integration_test.go              # White-box integration tests (3)
@@ -271,22 +280,22 @@ The integration test validates:
 
 | Package | Test Files | Test Count | Status |
 |---------|------------|------------|--------|
-| `internal/cli` | adapters_test.go, root_test.go, config_test.go | 31 | ✓ |
+| `internal/cli` | adapters_test.go, clean_test.go, code_profile_test.go, profile_test.go, profile_integration_test.go, root_test.go, status_test.go | 80 | ✓ |
 | `internal/config` | loader_test.go, types_test.go, test/loglevel_test.go | 8 | ✓ |
-| `internal/configwizard` | wizard_test.go, connectivity_test.go, shell_test.go | 88 | ✓ |
+| `internal/configwizard` | connectivity_test.go, profile_test.go, shell_test.go, wizard_test.go | 111 | ✓ |
 | `internal/daemon` | instance_test.go, pidfile_test.go | 31 | ✓ |
 | `internal/interceptor` | max_token_test.go, reasoning_test.go, tool_enhance_test.go | 43 | ✓ |
 | `internal/logging` | logging_test.go, sanitize_test.go | 13 | ✓ |
 | `internal/monitor` | buffer_test.go, model_test.go, poller_test.go, tailer_test.go, view_test.go | 43 | ✓ |
 | `internal/provider` | client_test.go, http_test.go, streaming_timeout_test.go, test/repro_test.go | 34 | ✓ |
-| `internal/proxy` | handler_test.go, server_test.go, streaming_test.go, interceptor_test.go, compactor_test.go, +5 more | 135 | ✓ |
-| `internal/router` | engine_test.go, failover_test.go | 11 | ✓ |
-| `internal/transformer` | base_test.go, registry_test.go, test/integration_test.go, transformers/*.go | 70 | ✓ |
+| `internal/proxy` | admin_handler_test.go, deepcopy_test.go, error1213_repro_test.go, files_handler_test.go, handler_image_test.go, handler_test.go, interceptor_test.go, server_test.go, streaming_test.go, streaming_timeout_test.go, beta_header_test.go, compactor_test.go | 156 | ✓ |
+| `internal/router` | engine_test.go, failover_test.go | 15 | ✓ |
+| `internal/transformer` | base_test.go, registry_test.go, test/integration_test.go, transformers/*.go (incl. gemini_test.go) | 87 | ✓ |
 | `internal/usage` | db_test.go, tracker_test.go, period_test.go, stats_test.go, formatter_test.go | 21 | ✓ |
 | `pkg/api/anthropic` | types_test.go, test/*.go (4 files) | 41 | ✓ |
 | `test/` (integration) | files, images, security, integration/ | 22 | ✓ |
 
-**Overall:** **591 tests** across 23 packages (569 internal + 22 integration)
+**Overall:** **726 tests** across 23 packages
 
 ---
 
@@ -294,22 +303,22 @@ The integration test validates:
 
 | Module | Current Coverage | Target | Status |
 |--------|------------------|--------|--------|
-| `daemon` | ~86% | 90%+ | ~ |
+| `daemon` | ~88% | 90%+ | ~ |
 | `interceptor` | ~92% | 90%+ | ✓ |
 | `transformer` (core) | ~96% | 90%+ | ✓ |
 | `usage` | ~89% | 90%+ | ~ |
 | `logging` | ~80% | 90% | ~ |
-| `router` | ~84% | 90% | ~ |
-| `proxy` | ~73% | 90% | ~ |
+| `router` | ~87% | 90% | ~ |
+| `proxy` | ~79% | 90% | ~ |
 | `provider` | ~71% | 90% | ~ |
 | `anthropic` | ~69% | 90% | ~ |
 | `transformer/transformers` | ~45% | 90% | ~ |
 | `monitor` | ~36% | 60%+ | ~ |
-| `config` | ~36% | 90% | ~ |
+| `config` | ~60% | 90% | ~ |
 | `configwizard` | ~25% | 60%+ | ~ |
-| `cli` | ~9% | 50%+ | ~ |
+| `cli` | ~29% | 50%+ | ~ |
 
-**Overall:** ~39% average coverage across 23 packages
+**Overall:** ~46% average coverage across 23 packages
 
 ---
 
@@ -328,6 +337,10 @@ Tests for route detection logic:
 | `TestRoutePriority` | Route priority ordering |
 | `TestThinkLevelNoRouteConfigured` | Fallback to default when no think routes |
 | `TestGetTargets` | Target retrieval and default fallback |
+| `TestProfileBasedRouting` | Profile-aware route selection |
+| `TestProfileSwitching` | Hot-reload profile switching |
+| `TestProfileBasedRouting_ThreadSafe` | Concurrent profile access with mutex |
+| `TestProfileFallbackToLegacy` | Legacy route fallback when no profiles |
 | `TestFailover*` | Failover iteration and exhaustion tests |
 
 ### Proxy Handler Tests (`internal/proxy/handler_test.go`)
@@ -346,6 +359,41 @@ Tests for HTTP handling and request analysis:
 | `isBackground_*` | Background agent detection via model name |
 | `getThinkLevel_*` | Thinking level detection with edge cases |
 | `Handler_Setters` | Dependency injection for router, registry, clients |
+
+### Proxy Admin Handler Tests (`internal/proxy/admin_handler_test.go`)
+
+Tests for admin API profile management:
+
+| Test | Description |
+|------|-------------|
+| `TestAdminHandler_ListProfiles` | List profiles with active marker |
+| `TestAdminHandler_GetActiveProfile` | Get current active profile |
+| `TestAdminHandler_SwitchProfile` | Switch to a different profile |
+| `TestAdminHandler_SwitchProfile_InvalidProfile` | Error on non-existent profile |
+| `TestAdminHandler_SwitchProfile_EmptyProfile` | Error on empty profile name |
+| `TestAdminHandler_SwitchProfile_InvalidBody` | Error on malformed request body |
+| `TestAdminHandler_SwitchProfile_ReturnsProfileDetails` | Response includes profile name and routes |
+| `TestAdminHandler_Unauthorized` | Auth rejection for missing/wrong token |
+| `TestAdminHandler_TokenInQueryParam` | Token accepted via query parameter |
+| `TestAdminHandler_LocalhostOnly` | Rejection for non-localhost requests |
+| `TestAdminHandler_UnknownEndpoint` | 404 for unrecognized admin paths |
+| `TestAdminHandler_ListProfiles_Sorted` | Profiles returned in alphabetical order |
+| `TestAdminHandler_ListProfiles_LegacyRoutes` | Legacy routes shown when no profiles |
+
+### CLI Profile Command Tests (`internal/cli/profile_test.go`, `profile_integration_test.go`)
+
+Tests for profile CLI commands:
+
+| Test | Description |
+|------|-------------|
+| `TestNewProfileCommand*` | Profile command structure and subcommands |
+| `TestNewProfileListCommand` | List command flags and defaults |
+| `TestNewProfileSwitchCommand` | Switch command args validation |
+| `TestNewProfileStatusCommand` | Status command flags |
+| `TestProfileSwitchWorkflow_Integration` | Full workflow: config → engine → admin API → switch |
+| `TestProfileSwitchWithRouterEngine_Integration` | Engine profile switching with route verification |
+| `TestProfileListCommand_OutputFormatting` | Output format with asterisk marker |
+| `TestPrintProfileList_FromConfig` | Direct function call with config object |
 
 ### Proxy Server Tests (`internal/proxy/server_test.go`)
 

@@ -31,6 +31,17 @@ Project configuration **completely overrides** global configuration when present
       "default": "provider:model",
       "background": "provider:model"
     },
+    "profiles": {
+      "default": {
+        "name": "Default",
+        "routes": { "default": "provider:model" }
+      },
+      "cost-opt": {
+        "name": "Cost Optimized",
+        "description": "Use cheaper models",
+        "routes": { "default": "provider:cheap-model" }
+      }
+    },
     "maxRetries": 2,
     "retryDelay": "500ms"
   },
@@ -41,6 +52,8 @@ Project configuration **completely overrides** global configuration when present
   }
 }
 ```
+
+> **Note:** Top-level `"profiles"` is also supported for backward compatibility and is automatically migrated to `router.profiles` at load time.
 
 ## Server Configuration
 
@@ -228,7 +241,7 @@ If you prefer, you can combine all OpenRouter models into a single provider:
 }
 ```
 
-- **Transformer**: `anthropic` (Anthropic-compatible)
+- **Transformer**: `glm-anthropic` (Anthropic-compatible)
 - **Auth**: `x-api-key: <key>`
 
 #### Anthropic (Direct)
@@ -267,18 +280,18 @@ If you prefer, you can combine all OpenRouter models into a single provider:
 }
 ```
 
-### Routes
+### Routes (priority order — checked top to bottom)
 
-| Route | Description | Trigger | Detection Method |
-|-------|-------------|---------|------------------|
-| `default` | Default fallback | All unmatched requests | - |
-| `background` | Background tasks | Claude Code background agents | Model contains "claude" + "haiku" |
-| `think` | Basic thinking | "think" trigger phrase | `budget_tokens >= 4,000` |
-| `thinkMore` | Enhanced thinking | "think hard", "think more" | `budget_tokens >= 10,000` |
-| `ultrathink` | Maximum thinking | "ultrathink", "think harder" | `budget_tokens >= 32,000` |
-| `longContext` | Long conversations | Large context | Token count > 60,000 |
-| `webSearch` | Web search enabled | Web search tools | Tool names contain "web"/"search" |
-| `image` | Image processing | Images in request | Request contains image blocks |
+| Priority | Route | Description | Trigger | Detection Method |
+|----------|-------|-------------|---------|------------------|
+| 1 | `background` | Background tasks | Background agent request | `IsBackground` flag on request |
+| 2 | `ultrathink` | Maximum thinking | "ultrathink", "think harder" | `budget_tokens >= 32,000` |
+| 3 | `thinkMore` | Enhanced thinking | "think hard", "think more" | `budget_tokens >= 10,000` |
+| 4 | `think` | Basic thinking | "think" trigger phrase | `budget_tokens >= 4,000` |
+| 5 | `image` | Image processing | Images in request | Request contains image blocks |
+| 6 | `webSearch` | Web search enabled | Web search tools | Tool names contain "web"/"search" |
+| 7 | `longContext` | Long conversations | Large context | Token count > 60,000 |
+| 8 | `default` | Default fallback | All unmatched requests | - |
 
 ### Thinking Levels
 
@@ -332,6 +345,93 @@ Multiple targets are tried in sequence with failover:
 |-------|------|---------|-------------|
 | `maxRetries` | int | 2 | Max retries per route |
 | `retryDelay` | string | 500ms | Delay between retries |
+
+## Route Profiles
+
+<!-- AUTO-GENERATED:START:profiles -->
+Route profiles allow you to define multiple route configurations and switch between them during a session without restarting the router.
+
+### Profile Configuration
+
+Profiles are stored under `router.profiles` in the config file. Top-level `"profiles"` is also accepted for backward compatibility and is automatically migrated during loading.
+
+```json
+{
+  "router": {
+    "profiles": {
+      "default": {
+        "name": "Default",
+        "description": "Standard routing with Claude models",
+        "routes": {
+          "default": "openrouter:anthropic/claude-sonnet-4",
+          "background": "bigmodel:glm-4.5-air",
+          "think": "openrouter:anthropic/claude-sonnet-4",
+          "ultrathink": "openrouter:anthropic/claude-opus-4"
+        }
+      },
+      "cost-opt": {
+        "name": "Cost Optimized",
+        "description": "Use cheaper models for cost savings",
+        "routes": {
+          "default": "bigmodel:glm-4.7",
+          "background": "bigmodel:glm-4.5-air",
+          "think": "bigmodel:glm-4.7",
+          "ultrathink": "openrouter:anthropic/claude-sonnet-4"
+        }
+      },
+      "premium": {
+        "name": "Premium",
+        "description": "Maximum quality with Claude Opus",
+        "routes": {
+          "default": "openrouter:anthropic/claude-opus-4",
+          "background": "openrouter:anthropic/claude-haiku-4.5",
+          "think": "openrouter:anthropic/claude-opus-4",
+          "ultrathink": "openrouter:anthropic/claude-opus-4"
+        }
+      }
+    }
+  }
+}
+```
+
+### Profile Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Display name for the profile |
+| `description` | string | No | Optional description of the profile purpose |
+| `routes` | object | Yes | Route name to `provider:model` chain mapping |
+
+### Default Profile Behavior
+
+When the router starts, it automatically selects the default profile:
+- If a profile named "default" exists, it is used
+- Otherwise, the first profile alphabetically is used
+- If no profiles are configured, legacy `router.routes` are used
+
+The profile selection is **runtime-only** — it is not persisted to the config file. Switching profiles during a session affects only the current running instance, not the configuration file.
+
+### Legacy Compatibility
+
+If `profiles` is empty or not configured, the router falls back to `router.routes` for backward compatibility with existing configurations.
+
+### Switching Profiles
+
+Use the CLI to switch profiles during a running session:
+
+```bash
+# List available profiles
+ccrouter profile list
+
+# Switch to a different profile
+ccrouter profile switch cost-opt
+
+# Show current active profile
+ccrouter profile status
+```
+
+Profile switching is hot-swappable — no restart required. The router immediately applies the new routes for subsequent requests.
+<!-- AUTO-GENERATED:END:profiles -->
 
 ## Logging Configuration
 

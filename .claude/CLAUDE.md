@@ -5,9 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run Commands
 
 ```bash
-# Build
-go build -o bin/debug/ccrouter ./cmd/ccrouter          # debug binary
-go build -o bin/release/ccrouter ./cmd/ccrouter         # release binary
+# Build (always cross-compile for Linux too)
+go build -o bin/debug/ccrouter ./cmd/ccrouter                        # macOS debug
+GOOS=linux GOARCH=amd64 go build -o bin/linux-amd64/ccrouter ./cmd/ccrouter
+GOOS=linux GOARCH=arm64 go build -o bin/linux-arm64/ccrouter ./cmd/ccrouter
+go build -ldflags="-s -w" -o bin/release/ccrouter ./cmd/ccrouter   # macOS release
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/linux-amd64/ccrouter ./cmd/ccrouter
+GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o bin/linux-arm64/ccrouter ./cmd/ccrouter
 
 # Test
 go test ./...                                           # all tests
@@ -21,6 +25,11 @@ go test -v ./test/security                              # security tests
 ./bin/ccrouter start --log-level=debug --log-destination=file
 ./bin/ccrouter status                                   # check status
 ./bin/ccrouter stop --all                               # stop all instances
+./bin/ccrouter profile list                             # list route profiles
+./bin/ccrouter profile switch <name>                    # switch profile
+./bin/ccrouter profile status                           # show active profile
+./bin/ccrouter config                                   # interactive TUI wizard
+./bin/ccrouter monitor                                  # live usage monitor
 ```
 
 ## Architecture
@@ -50,7 +59,8 @@ Provider API → Transformer → HTTP Proxy → Claude Code
 - `internal/provider/` — HTTP client for provider APIs
 - `internal/usage/` — SQLite usage tracking with buffered writes (500 records or 3s)
 - `internal/config/` — Config loading with `${VAR_NAME}` env var interpolation
-- `internal/cli/` — Cobra CLI commands (start, code, stop, status, config, logs, usage, clean, restart, monitor)
+- `internal/cli/` — Cobra CLI commands (start, code, stop, status, config, logs, usage, clean, restart, monitor, profile)
+- `internal/configwizard/` — Interactive TUI configuration wizard (Bubble Tea)
 - `internal/monitor/` — Live usage monitor terminal UI (view, poller, buffer, tailer)
 - `internal/interceptor/` — Request/response interceptors (max tokens, reasoning, tool enhancement)
 - `internal/daemon/` — Instance management (PID files, metadata)
@@ -81,18 +91,18 @@ type Transformer interface {
 
 ## Route Detection
 
-Router selects routes automatically (`internal/router/engine.go`):
+Router selects routes automatically (`internal/router/engine.go`) — priority order matters:
 
-| Route | Trigger |
-|-------|---------|
-| `background` | Model contains "claude" + "haiku" |
-| `ultrathink` | `budget_tokens >= 32,000` |
-| `thinkMore` | `budget_tokens >= 10,000` |
-| `think` | `budget_tokens >= 4,000` |
-| `longContext` | Token count > 60,000 |
-| `image` | Request contains image blocks |
-| `webSearch` | Tool names contain "web"/"search" |
-| `default` | Fallback |
+| Priority | Route | Trigger |
+|----------|-------|---------|
+| 1 | `background` | `IsBackground` flag on request |
+| 2 | `ultrathink` | `budget_tokens >= 32,000` |
+| 3 | `thinkMore` | `budget_tokens >= 10,000` |
+| 4 | `think` | `budget_tokens >= 4,000` |
+| 5 | `image` | Request contains image blocks |
+| 6 | `webSearch` | Tool names contain "web"/"search" |
+| 7 | `longContext` | Token count > 60,000 |
+| 8 | `default` | Fallback |
 
 Thinking level cascade: `ultrathink` → `thinkMore` → `think` if not configured.
 
@@ -138,6 +148,7 @@ Claude Code doesn't use Files API. `/v1/files` endpoints exist for spec complian
 - **Global:** `~/.cc-modelrouter/config.json`
 - **Project:** `<project>/.cc-modelrouter/config.json` (completely overrides global, not merged)
 - **Env vars:** `${VAR_NAME}` syntax for API keys
+- **Profiles:** Named route configurations with hot-swap capability (config via `router.profiles`)
 - **Instance files:** `~/.cc-modelrouter/instances/*.json`, logs: `~/.cc-modelrouter/logs/inst_*.log`
 - **Usage DB:** `~/.cc-modelrouter/usage.db` (SQLite)
 

@@ -12,12 +12,16 @@ A Go-based HTTP proxy server that routes Claude Code requests to multiple LLM pr
 
 ## Features
 
-- **Multi-Provider Support**: Route to Anthropic, OpenRouter, Google Gemini, Alibaba Qwen, and Zhipu GLM
-- **Smart Routing**: Automatic route detection based on request characteristics
-- **Format Transformation**: Built-in transformers for provider API compatibility
-- **Sequential Failover**: Loop through providers with automatic retry
+- **Multi-Provider Support**: Route to Anthropic, OpenRouter, Google Gemini, Alibaba Qwen, Zhipu GLM, OpenAI, and more
+- **Smart Routing**: Automatic route detection based on request characteristics (think levels, images, web search, etc.)
+- **Format Transformation**: Built-in transformers for provider API compatibility (Anthropic, OpenAI, Gemini, GLM formats)
+- **Sequential Failover**: Loop through providers with automatic retry on failure
 - **Instance Isolation**: Each `ccrouter code` command creates an isolated router instance
-- **Configuration Override**: Project configs override global settings
+- **Configuration Override**: Project configs override global settings completely
+- **Route Profiles**: Dynamic switching between different routing configurations without restart
+- **Usage Tracking**: SQLite-based token usage tracking with live monitor
+- **Request Compaction**: Automatic request reduction for providers with context window limits
+- **Interactive Config Wizard**: Full-screen TUI for configuration management
 
 ## Installation
 
@@ -47,7 +51,7 @@ Create `~/.cc-modelrouter/config.json`:
     "bigmodel": {
       "apiKey": "${CCROUTER_BIGMODEL_API_KEY}",
       "baseURL": "https://open.bigmodel.cn/api/anthropic",
-      "transformer": "anthropic",
+      "transformer": "glm-anthropic",
       "models": ["glm-4.7", "glm-4.5-air"]
     }
   },
@@ -70,7 +74,7 @@ Create `~/.cc-modelrouter/config.json`:
 ```json
 "openrouter-openai": {
   "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
-  "baseURL": "https://openrouter.ai/api/v1",
+  "baseURL": "https://openrouter.ai/api",
   "transformer": "openai",
   "models": ["google/gemini-2.5-flash"]
 }
@@ -101,7 +105,7 @@ claude
 
 | Command | Description |
 |---------|-------------|
-| `ccrouter code` | Start router and launch Claude Code |
+| `ccrouter code` | Start router and launch Claude Code with auto-configuration |
 | `ccrouter start` | Start router server standalone |
 | `ccrouter stop [id]` | Stop instance (or all if no ID given) |
 | `ccrouter restart [id]` | Restart instance (or all if no ID given) |
@@ -110,6 +114,53 @@ claude
 | `ccrouter config` | Interactive configuration wizard (TUI) |
 | `ccrouter logs [id]` | Show logs for instance |
 | `ccrouter monitor` | Live usage monitor with terminal UI |
+| `ccrouter profile list` | List available route profiles |
+| `ccrouter profile switch <profile>` | Switch to a different route profile |
+| `ccrouter profile status` | Show currently active profile |
+
+### Detailed Command Usage
+
+**Start with specific configuration:**
+```bash
+# Start with custom config file
+ccrouter code --config /path/to/custom-config.json
+
+# Start on specific port
+ccrouter code --port 9090
+
+# Start with specific route profile
+ccrouter code --profile cost-opt
+
+# Enable debug logging
+ccrouter start --log-level=debug --log-destination=file
+
+# Start with specific route profile
+ccrouter start --profile production
+```
+
+**Manage instances:**
+```bash
+# Stop all instances
+ccrouter stop
+
+# Stop specific instance
+ccrouter stop inst_20250216_143022
+
+# Force stop stuck instance
+ccrouter stop --force inst_20250216_143022
+```
+
+**View logs:**
+```bash
+# Show last 100 lines for specific instance
+ccrouter logs inst_20250216_143022
+
+# Follow logs in real-time
+ccrouter logs -f inst_20250216_143022
+
+# Show logs for all instances
+ccrouter logs
+```
 
 ## Configuration
 
@@ -170,7 +221,6 @@ Use `${VAR_NAME}` or `$VAR_NAME` syntax for sensitive values:
 | `models` | []string | List of available models |
 | `transformer` | string | Transformer name (defaults to provider name) |
 | `disableKeepAlives` | bool | Disable HTTP keep-alive for providers with connection issues |
-| `timeout` | string | HTTP timeout (e.g., "60s", "90s") |
 | `maxRequestBodyBytes` | int64 | Maximum request body size in bytes (default: 0 = no limit) |
 | `compaction` | object | Request compaction settings (method, summarizeProvider, summarizeModel) |
 
@@ -212,16 +262,15 @@ Data is stored in `~/.cc-modelrouter/usage.db` with buffered writes (500 records
 
 ## Supported Providers
 
-| Provider | Transformer | API Format | Compatible Models |
-|----------|-------------|------------|-------------------|
-| Anthropic | `anthropic` | Native Anthropic | Claude Sonnet 4, Haiku 4.5, Opus 4 |
-| OpenAI | `openai` | OpenAI-compatible | GPT-4, GPT-4 Turbo |
-| OpenRouter | `openrouter` | Anthropic-compatible | All OpenRouter models |
-| Google Gemini | `gemini` | Gemini native | Gemini Pro, Ultra, Flash |
-| Alibaba Qwen | `openai` | OpenAI-compatible | Qwen Turbo, Plus, Max |
-| Zhipu GLM | `glm-anthropic` | Anthropic-compatible | GLM-4, GLM-4.5 Air, GLM-4.6v, GLM-4.7 |
-| MiniMax | `anthropic` | Anthropic-compatible | MiniMax models |
-| Aliyun (DashScope) | `glm-anthropic` | Anthropic-compatible | GLM-5, GLM-4.7, MiniMax-M2.5 |
+| Provider | Transformer | API Format | Authentication | Compatible Models |
+|----------|-------------|------------|----------------|-------------------|
+| Anthropic | `anthropic` | Native Anthropic | `x-api-key` header | Claude Sonnet 4.5/Opus 4.5/Haiku 4.5 |
+| OpenRouter | `openrouter` | Anthropic-compatible | `x-api-key` header | All OpenRouter models (Anthropic, Gemini, OpenAI, etc.) |
+| OpenAI | `openai` | OpenAI-compatible | `Authorization: Bearer` header | GPT-4, GPT-4o, GPT-3.5 |
+| Google Gemini | `gemini` | Gemini native | Query param `key=` | Gemini Pro/Flash/Exp |
+| Zhipu GLM | `glm-anthropic` | Anthropic-compatible | `x-api-key` header | GLM-4/4.5 Air/4.6v/4.7 |
+| Alibaba Qwen | `openai` | OpenAI-compatible | `Authorization: Bearer` | Qwen Turbo/Plus/Max |
+| MiniMax | `anthropic` | Anthropic-compatible | `x-api-key` header | MiniMax models |
 
 ## Architecture
 
@@ -260,7 +309,9 @@ The router uses a **Unified Intermediate Format** architecture that separates pr
 │  Provider Transformers:                                     │
 │  • anthropic      (pass-through)                            │
 │  • openai         (OpenAI-compatible)                      │
+│  • openrouter     (Anthropic with signature handling)      │
 │  • gemini         (Gemini native)                           │
+│  • glm-anthropic  (Anthropic-compatible)                    │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
@@ -348,102 +399,162 @@ Interceptors provide cross-cutting concerns that can be applied to requests and 
 - Validate request parameters
 - Modify requests before routing
 - Add logging context
+- Adjust token limits based on provider capabilities
+- Enhance tool definitions
 
 **Response Interceptors:**
 - Modify response content
 - Extract and format thinking/reasoning
 - Track usage statistics
+- Validate response format
 
 **Streaming Interceptors:**
 - Modify SSE events during streaming
 - Extract thinking content from streams
 - Format tool call responses
+- Track streaming usage in real-time
 
 ### Provider Format Compatibility
 
 | Provider | Transformer | Request Format | Response Format | Streaming |
 |----------|-------------|---------------|----------------|-----------|
-| Anthropic | `anthropic` | Native | Native | Native events |
-| OpenAI | `openai` | OpenAI-compatible | OpenAI-compatible | Transformed |
-| OpenRouter | `openrouter` | Anthropic-compatible | Anthropic-compatible | Pass-through |
-| Google Gemini | `gemini` | Gemini native | Gemini native | Transformed |
-| Alibaba Qwen | `openai` | OpenAI-compatible | OpenAI-compatible | Transformed |
-| Zhipu GLM | `glm-anthropic` | Anthropic-compatible | Anthropic-compatible | Pass-through |
+| Anthropic | `anthropic` | Native Anthropic | Native Anthropic | Native events |
+| OpenAI | `openai` | OpenAI-compatible | OpenAI-compatible | Transformed to Anthropic |
+| OpenRouter | `openrouter` | Anthropic-compatible | Anthropic-compatible | Pass-through with validation |
+| Google Gemini | `gemini` | Gemini native | Gemini native | Transformed to Anthropic |
+| Alibaba Qwen | `openai` | OpenAI-compatible | OpenAI-compatible | Transformed to Anthropic |
+| Zhipu GLM | `glm-anthropic` | Anthropic-compatible | Anthropic-compatible | Pass-through with token tracking |
 | MiniMax | `anthropic` | Anthropic-compatible | Anthropic-compatible | Pass-through |
 
 ## Request Flow
 
 1. **Claude Code** sends request to `http://localhost:<port>/v1/messages`
-2. **Proxy Handler** validates Anthropic API request
-3. **Router Engine** detects route type and selects provider:model
-4. **Failover Manager** loops through providers with retry
-5. **Transformer** converts request to provider format
-6. **Provider Client** sends to provider API
+2. **Proxy Handler** validates Anthropic API request (max 50MB)
+3. **Router Engine** detects route type and selects provider:model based on priority
+4. **Failover Manager** loops through providers in route with retry on failure
+5. **Transformer** converts request to provider format using appropriate transformer
+6. **Provider Client** sends to provider API with retry logic
 7. **Transformer** converts response back to Anthropic format
-8. **Response Writer** streams back to Claude Code
+8. **Response Writer** streams back to Claude Code with usage tracking
 
 ## Instance Isolation
 
-Each `ccrouter code` command creates an isolated pair:
+Each `ccrouter code` command creates an isolated environment:
 
 - Unique instance ID: `inst_YYYYMMDD_HHMMSS`
-- Dynamically allocated port
+- Dynamically allocated port (or specified port)
 - Separate PID file: `~/.cc-modelrouter/instances/<instance-id>.json`
+- Instance-specific log file: `~/.cc-modelrouter/logs/<instance-id>.log`
 - Explicit environment for child Claude Code process
+- Temporary configuration override in project `.claude/settings.local.json`
+
+## Security Features
+
+- **Header Sanitization**: All logging automatically redacts sensitive headers (API keys, auth tokens)
+- **Environment Variable Support**: Secure API key storage using `${VAR_NAME}` syntax
+- **Admin API Protection**: Runtime profile management secured with generated tokens
+- **Request Size Limits**: Built-in protection against oversized requests
 
 ## Development
 
 ### Build
 
 ```bash
-go build ./...
+# Build debug binary
+go build -o bin/debug/ccrouter ./cmd/ccrouter
+
+# Cross-compile for Linux
+GOOS=linux GOARCH=amd64 go build -o bin/linux-amd64/ccrouter ./cmd/ccrouter
+GOOS=linux GOARCH=arm64 go build -o bin/linux-arm64/ccrouter ./cmd/ccrouter
+
+# Build release binary
+go build -ldflags="-s -w" -o bin/release/ccrouter ./cmd/ccrouter
 ```
 
 ### Run Tests
 
 ```bash
+# Run all tests
 go test ./...
 
-# With coverage
+# Test with coverage
 go test ./... -cover
-```
 
-See [docs/testing.md](docs/testing.md) for detailed testing documentation.
+# Generate coverage report
+go test ./... -coverprofile=coverage.out
+go tool cover -html=coverage.out
+
+# Run specific test
+go test ./internal/router -run TestThinkLevelDetection
+
+# Run security tests
+go test -v ./test/security
+```
 
 ### Project Structure
 
 ```
 cc-modelrouter/
-├── bin/                   # Compiled binaries
+├── bin/                        # Compiled binaries
 ├── cmd/
-│   └── ccrouter/          # Main CLI entry point
-├── docs/                  # Human documentation (design docs, architecture, security, API docs, user manuals)
-├── plans/                 # AI-generated planning documents (implementation plans, fix plans, refactor plans)
+│   └── ccrouter/              # Main CLI entry point
+├── docs/                      # Documentation (architecture, security, usage)
+├── plans/                     # Development plans and specifications
 ├── internal/
-│   ├── cli/               # CLI commands and adapters
-│   ├── config/            # Configuration loading and validation
-│   ├── configwizard/      # Interactive TUI configuration wizard
-│   ├── daemon/            # Instance management (PID, status)
-│   ├── interceptor/       # Request/response interceptors
-│   ├── logging/           # Logging utilities
-│   ├── provider/          # HTTP clients for providers
-│   ├── proxy/             # HTTP server and request handling
-│   ├── router/            # Routing engine and failover logic
-│   ├── transformer/       # Request/response transformers
-│   │   ├── transformers/  # Provider transformer implementations
-│   │   │   ├── anthropic.go
-│   │   │   ├── openai.go
-│   │   │   ├── openrouter.go
-│   │   │   ├── gemini.go
-│   │   │   └── glm_anthropic.go
-│   │   ├── test/          # Integration tests
-│   │   ├── base.go        # Base transformer utilities
-│   │   ├── interface.go   # Transformer interface definition
-│   │   └── registry.go    # Transformer registry
-│   └── usage/             # Usage tracking and statistics
+│   ├── cli/                   # CLI commands and adapters
+│   ├── config/                # Configuration loading and validation
+│   ├── configwizard/          # Interactive TUI configuration wizard (Bubble Tea)
+│   ├── daemon/                # Instance management (PID files, metadata)
+│   ├── interceptor/           # Request/response/streaming interceptors
+│   ├── logging/               # Logging utilities with header sanitization
+│   ├── monitor/               # Live usage monitor (terminal UI)
+│   ├── provider/              # HTTP clients for providers
+│   ├── proxy/                 # HTTP server and request handling
+│   ├── router/                # Routing engine and sequential failover
+│   ├── transformer/           # Request/response format transformers
+│   │   ├── transformers/      # Individual transformer implementations
+│   │   │   ├── anthropic.go   # Direct Anthropic API transformer
+│   │   │   ├── openai.go      # OpenAI-compatible transformer
+│   │   │   ├── openrouter.go  # OpenRouter-specific transformer
+│   │   │   ├── gemini.go      # Google Gemini transformer
+│   │   │   └── glm_anthropic.go # Zhipu GLM Anthropic-compatible transformer
+│   │   ├── interface.go       # Transformer interface definition
+│   │   ├── registry.go        # Transformer registry
+│   │   └── base.go            # Base transformer utilities
+│   └── usage/                 # SQLite-based usage tracking
 └── pkg/
     └── api/
-        └── anthropic/     # Anthropic API types
+        └── anthropic/         # Anthropic API type definitions with custom marshaling
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**API Key Errors**: Ensure environment variables are properly set and exported:
+```bash
+export CCROUTER_OPENROUTER_API_KEY="your-key-here"
+```
+
+**Port Conflicts**: Use `ccrouter status` to check for running instances and `ccrouter stop` to free ports.
+
+**Provider Authentication**: Most issues stem from incorrect API key format or insufficient permissions.
+
+### Debugging
+
+Enable debug logging to troubleshoot:
+```bash
+ccrouter start --log-level=debug --log-destination=file
+```
+
+Check instance logs:
+```bash
+ccrouter logs
+```
+
+View running instances:
+```bash
+ccrouter status
 ```
 
 ## License

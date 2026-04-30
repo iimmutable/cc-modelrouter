@@ -28,12 +28,15 @@ ccrouter code [flags]
   -c, --config string          Path to config file
       --log-destination string Log destination (file|stdout|stderr|path)
       --log-level string       Log level: debug, info, warn, error
+  -p, --port int               Port to listen on (default: 0 = OS picks a free port)
+      --profile string         Route profile to use at startup
 ```
 
 **Description:**
 - Creates an isolated router instance
 - Starts the HTTP server
 - Launches Claude Code with `ANTHROPIC_BASE_URL` set to the router
+- Creates a profile slash command for runtime profile switching
 - Handles graceful shutdown on SIGINT/SIGTERM
 
 **Examples:**
@@ -43,6 +46,9 @@ ccrouter code
 
 # Use specific config file
 ccrouter code -c /path/to/config.json
+
+# Use specific port
+ccrouter code -p 9090
 
 # Enable debug logging to file
 ccrouter code --log-level=debug --log-destination=file
@@ -65,6 +71,7 @@ ccrouter start [flags]
   -H, --host string            Host to bind to (overrides config)
       --log-destination string Log destination (file|stdout|stderr|path)
       --log-level string       Log level: debug, info, warn, error
+      --profile string         Route profile to use at startup
 ```
 
 **Description:**
@@ -211,6 +218,11 @@ Interactive configuration wizard (TUI).
 ccrouter config
 ```
 
+**Flags:**
+```
+      --shell-export    Print shell export commands (for eval)
+```
+
 **Description:**
 - Launches a full-screen terminal UI for managing all configuration
 - Menu-driven interface for providers, routes, server, and logging settings
@@ -244,6 +256,113 @@ ccrouter config
 ```
 
 > **Note:** This replaces the old `show`, `path`, and `init` subcommands.
+
+---
+
+### ccrouter profile
+
+Manage route profiles for switching between different route configurations during a session.
+
+```bash
+ccrouter profile <subcommand> [flags]
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|------------|-------------|
+| `list` | List all configured profiles |
+| `switch <profile>` | Switch to a different profile |
+| `status` | Show the currently active profile |
+
+#### ccrouter profile list
+
+List all configured route profiles.
+
+```bash
+ccrouter profile list [flags]
+```
+
+**Flags:**
+```
+      --from-config    List profiles from config file instead of running instance
+      --instance       Instance ID to query (uses most recent if not specified)
+```
+
+**Description:**
+- Shows all profiles with their names and descriptions
+- Marks the active profile with `*`
+- Can query from config file or running instance
+
+**Examples:**
+```bash
+# List profiles from running instance
+ccrouter profile list
+
+# List profiles from config file
+ccrouter profile list --from-config
+
+# List profiles for specific instance
+ccrouter profile list --instance inst_20250216_143022
+```
+
+#### ccrouter profile switch
+
+Switch to a different route profile.
+
+```bash
+ccrouter profile switch <profile-name> [flags]
+```
+
+**Arguments:**
+```
+  profile-name   Name/key of the profile to switch to (required)
+```
+
+**Flags:**
+```
+      --instance   Instance ID to switch (uses most recent if not specified)
+```
+
+**Description:**
+- Hot-swaps routes without restarting the router
+- Requires a running router instance
+- Updates instance metadata with new active profile
+
+**Examples:**
+```bash
+# Switch to "cost-opt" profile
+ccrouter profile switch cost-opt
+
+# Switch for specific instance
+ccrouter profile switch production --instance inst_20250216_143022
+```
+
+#### ccrouter profile status
+
+Show the currently active profile.
+
+```bash
+ccrouter profile status [flags]
+```
+
+**Flags:**
+```
+      --instance   Instance ID to query (uses most recent if not specified)
+```
+
+**Description:**
+- Shows the active profile name for a running instance
+- Reports "No profiles configured" if using legacy routes
+
+**Examples:**
+```bash
+# Show active profile
+ccrouter profile status
+
+# Show for specific instance
+ccrouter profile status --instance inst_20250216_143022
+```
 
 ---
 
@@ -283,42 +402,6 @@ ccrouter logs -n 50 inst_20250216_143022
 
 ---
 
-### ccrouter usage
-
-Show usage statistics for models.
-
-```bash
-ccrouter usage [instance-id] [period]
-```
-
-**Arguments:**
-```
-  instance-id   ID of instance (optional, shows all instances if not provided)
-  period        Time period: all-time, today, this-week, last-week, this-month, last-month,
-                this-quarter, last-year, or custom range YYYYMMDD-YYYYMMDD
-```
-
-**Examples:**
-```bash
-# Show all-time usage across all instances
-ccrouter usage
-
-# Show usage for specific instance
-ccrouter usage inst_20250315_143022
-
-# Show usage for specific period
-ccrouter usage today
-ccrouter usage this-week
-ccrouter usage 20250301-20250315
-```
-
-**Description:**
-- Displays token usage statistics per model, route, and instance
-- Data is stored in SQLite at `~/.cc-modelrouter/usage.db`
-- Uses buffered writes (500 records or 3 seconds) for performance
-
----
-
 ### ccrouter monitor
 
 Live usage monitor with terminal UI.
@@ -330,7 +413,7 @@ ccrouter monitor [flags]
 <!-- AUTO-GENERATED:START:monitor -->
 **Flags:**
 ```
-      --refresh duration   Stats refresh interval (default: 1s)
+      --refresh duration   Stats refresh interval (default: 500ms)
 ```
 
 **Description:**
@@ -353,7 +436,7 @@ ccrouter monitor [flags]
 
 **Examples:**
 ```bash
-# Start monitor with default 1s refresh
+# Start monitor with default 500ms refresh
 ccrouter monitor
 
 # Start with custom refresh interval
@@ -378,7 +461,9 @@ Instances are stored in `~/.cc-modelrouter/instances/`:
   "configType": "project",
   "configPath": "/path/to/project/.cc-modelrouter/config.json",
   "startTime": "2025-02-16T14:30:22Z",
-  "projectRoot": "/path/to/project"
+  "projectRoot": "/path/to/project",
+  "adminToken": "<generated-token>",
+  "activeProfile": "default"
 }
 ```
 

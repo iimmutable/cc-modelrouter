@@ -8,11 +8,15 @@ AI-specific guidance for Claude Code when working with cc-modelrouter.
 
 ### Essential Build & Test Commands
 ```bash
-# Build debug binary (default)
+# Build debug binary (always cross-compile for Linux too)
 go build -o bin/debug/ccrouter ./cmd/ccrouter
+GOOS=linux GOARCH=amd64 go build -o bin/linux-amd64/ccrouter ./cmd/ccrouter
+GOOS=linux GOARCH=arm64 go build -o bin/linux-arm64/ccrouter ./cmd/ccrouter
 
 # Build release binary
-go build -o bin/release/ccrouter ./cmd/ccrouter
+go build -ldflags="-s -w" -o bin/release/ccrouter ./cmd/ccrouter
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/linux-amd64/ccrouter ./cmd/ccrouter
+GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o bin/linux-arm64/ccrouter ./cmd/ccrouter
 
 # Run all tests
 go test ./...
@@ -49,7 +53,18 @@ go test -v ./test/security
 ./bin/ccrouter stop <instance-id>
 
 # Stop all
-./bin/ccrouter stop --all
+./bin/ccrouter stop
+
+# Manage route profiles
+./bin/ccrouter profile list
+./bin/ccrouter profile switch <profile-name>
+./bin/ccrouter profile status
+
+# Interactive configuration wizard
+./bin/ccrouter config
+
+# Live usage monitor
+./bin/ccrouter monitor
 ```
 
 ### Critical File Paths
@@ -86,6 +101,10 @@ Provider API → Transformer → HTTP Proxy → Claude Code
 - `internal/router/` - Route detection, provider selection, failover
 - `internal/transformer/` - Direct format conversion (Anthropic ↔ Provider)
 - `internal/usage/` - SQLite usage tracking with buffered writes
+- `internal/configwizard/` - Interactive TUI configuration wizard (Bubble Tea)
+- `internal/monitor/` - Live usage monitor terminal UI
+- `internal/interceptor/` - Request/response/streaming interceptors
+- `internal/daemon/` - Instance management (PID files, metadata)
 
 ---
 
@@ -270,18 +289,18 @@ Add via handler methods:
 
 ## 🎯 Route Detection Logic
 
-Router automatically selects routes based on request characteristics:
+Router automatically selects routes based on request characteristics (priority order matters — checked top to bottom):
 
-| Route | Trigger | Detection Method |
-|-------|---------|-----------------|
-| `background` | Claude Code background agent | Model contains "claude" + "haiku" |
-| `ultrathink` | Maximum thinking | `budget_tokens >= 32,000` |
-| `thinkMore` | Enhanced thinking | `budget_tokens >= 10,000` |
-| `think` | Basic thinking | `budget_tokens >= 4,000` |
-| `longContext` | Large context | Token count > 60,000 |
-| `image` | Image content | Request contains image blocks |
-| `webSearch` | Web search enabled | Tool names contain "web"/"search" |
-| `default` | Fallback | All other requests |
+| Priority | Route | Trigger | Detection Method |
+|----------|-------|---------|-----------------|
+| 1 | `background` | Background agent request | `IsBackground` flag on request |
+| 2 | `ultrathink` | Maximum thinking | `budget_tokens >= 32,000` |
+| 3 | `thinkMore` | Enhanced thinking | `budget_tokens >= 10,000` |
+| 4 | `think` | Basic thinking | `budget_tokens >= 4,000` |
+| 5 | `image` | Image content | Request contains image blocks |
+| 6 | `webSearch` | Web search enabled | Tool names contain "web"/"search" |
+| 7 | `longContext` | Large context | Token count > 60,000 |
+| 8 | `default` | Fallback | All other requests |
 
 **Thinking level fallback:** If `ultrathink` not configured, falls back to `thinkMore`, then `think`.
 

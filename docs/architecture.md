@@ -44,9 +44,9 @@ Handles command-line interface using Cobra framework.
 - `restart` - Restart instance
 - `status` - Show running instances
 - `clean` - Remove stale instance files
-- `config` - Show active configuration
+- `config` - Interactive TUI configuration wizard
+- `profile` - Manage route profiles (list, switch, status)
 - `logs` - Show instance logs
-- `usage` - Show token usage statistics
 - `monitor` - Live usage monitor with terminal UI
 
 ### Configuration Layer (`internal/config/`)
@@ -62,7 +62,8 @@ Manages configuration loading with support for:
 type Config struct {
     Server    ServerConfig
     Providers map[string]ProviderConfig
-    Router    RouterConfig
+    Router    RouterConfig    // includes Routes, Profiles, MaxRetries, RetryDelay
+    Logging   LoggingConfig   // opt-in logging
 }
 ```
 
@@ -78,23 +79,35 @@ HTTP server implementing the Anthropic Messages API endpoint.
 **Key Components:**
 - `Server` - HTTP server with graceful shutdown
 - `Handler` - Request handler for `/v1/messages`
+- `AdminHandler` - Runtime profile management API (localhost-only, token-authenticated)
+- `Compactor` - Request compaction for providers with context window limits
 - `SSEWriter` - Server-Sent Events streaming
+
+**Admin API Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/_admin/profiles` | List all configured profiles |
+| `GET` | `/_admin/profiles/active` | Get the currently active profile |
+| `POST` | `/_admin/profiles/switch` | Switch to a different profile |
+
+All endpoints require `localhost` access and a valid `X-Admin-Token` header (or `?token=` query parameter). The admin token is generated at instance startup and stored in instance metadata.
 
 ### Router Engine Layer (`internal/router/`)
 
 Determines which provider and model to use for each request.
 
-**Route Detection:**
-| Route | Trigger Condition | Detection Method |
-|-------|-------------------|------------------|
-| `background` | Background agent | Model contains "claude" + "haiku" |
-| `ultrathink` | Highest thinking | `budget_tokens >= 32,000` |
-| `thinkMore` | Middle thinking | `budget_tokens >= 10,000` |
-| `think` | Basic thinking | `budget_tokens >= 4,000` |
-| `image` | Image content | Request contains image blocks |
-| `webSearch` | Web search enabled | Tool names contain "web"/"search" |
-| `longContext` | Large context | Token count > 60,000 |
-| `default` | Fallback | All other requests |
+**Route Detection (priority order — checked top to bottom):**
+| Priority | Route | Trigger Condition | Detection Method |
+|----------|-------|-------------------|------------------|
+| 1 | `background` | Background agent | `IsBackground` flag on request |
+| 2 | `ultrathink` | Highest thinking | `budget_tokens >= 32,000` |
+| 3 | `thinkMore` | Middle thinking | `budget_tokens >= 10,000` |
+| 4 | `think` | Basic thinking | `budget_tokens >= 4,000` |
+| 5 | `image` | Image content | Request contains image blocks |
+| 6 | `webSearch` | Web search enabled | Tool names contain "web"/"search" |
+| 7 | `longContext` | Large context | Token count > 60,000 |
+| 8 | `default` | Fallback | All other requests |
 
 **Thinking Levels:**
 
@@ -232,7 +245,9 @@ Each `ccrouter code` command creates an isolated environment:
   "configType": "project",
   "configPath": "/path/to/project/.cc-modelrouter/config.json",
   "startTime": "2025-02-16T14:30:22Z",
-  "projectRoot": "/path/to/project"
+  "projectRoot": "/path/to/project",
+  "adminToken": "<generated-token>",
+  "activeProfile": "default"
 }
 ```
 
