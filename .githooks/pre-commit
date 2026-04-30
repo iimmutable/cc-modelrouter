@@ -58,4 +58,29 @@ if [ $MISPLACED -eq 1 ]; then
     exit 1
 fi
 
+# Verify test packages in <module>/test/ directories compile.
+# This catches wrong package names and white-box tests in black-box locations.
+if [ -n "$STAGED_TESTS" ]; then
+    TEST_DIRS=$(echo "$STAGED_TESTS" | xargs -I{} dirname {} | sort -u)
+    for DIR_PATH in $TEST_DIRS; do
+        case "$DIR_PATH" in
+            */test)
+                if ls "$DIR_PATH"/*_test.go >/dev/null 2>&1; then
+                    if ! go vet "./$DIR_PATH" 2>/dev/null; then
+                        echo "⚠️  Test package fails to compile: $DIR_PATH"
+                        echo "   Fix package declaration or move white-box tests alongside source."
+                        MISPLACED=1
+                    fi
+                fi
+                ;;
+        esac
+    done
+
+    if [ $MISPLACED -eq 1 ]; then
+        echo ""
+        echo "Commit rejected. Fix compilation errors in test packages."
+        exit 1
+    fi
+fi
+
 exit 0

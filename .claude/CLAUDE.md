@@ -137,6 +137,11 @@ GLM sends both `input_tokens` and `output_tokens` in `message_delta` events. Ext
 | White-box | `<module>/` (alongside source) | `package <module>` |
 | Cross-module | `test/` (root) | varies |
 
+**Rules:**
+- `<module>/test/` files **must** use `package <module>_test` and **must only reference exported symbols**
+- If a test references unexported symbols, it **must** be alongside source with `package <module>`
+- **Never** move a white-box test to a `test/` subdirectory — package isolation prevents access to unexported symbols and it will break compilation
+
 Test files with no corresponding source file must go in `test/` subfolder. See `.githooks/pre-commit`.
 
 ### Files API — NOT IMPLEMENTED

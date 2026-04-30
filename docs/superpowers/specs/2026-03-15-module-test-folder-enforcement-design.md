@@ -200,3 +200,13 @@ Existing tests are not automatically migrated. The enforcement applies to:
 - [ ] Hook allows white-box tests alongside source files (with info message)
 - [ ] Hook rejects misplaced test files (not in test/ and not alongside source)
 - [ ] Git is configured to use `.githooks/` directory
+
+## Lessons Learned (2026-04-30)
+
+During a test reorganization, several issues were discovered:
+
+1. **White-box tests must never be placed in `<module>/test/`** — Go's package isolation means tests in a separate directory cannot access unexported symbols from the parent package, even if they declare `package <module>`. The directory forms a separate Go package. Always keep white-box tests alongside source.
+
+2. **Package declarations in `<module>/test/` must use `_test` suffix** — Files in `<module>/test/` form an external test package and must use `package <module>_test`. Using `package <module>` or `package test` will cause compilation failures or incorrect behavior.
+
+3. **File placement validation is insufficient — compilation validation is needed** — The pre-commit hook initially only checked file placement but allowed wrong package names and white-box tests in black-box locations. A `go vet` check was added to catch compilation errors in test packages before they are committed.

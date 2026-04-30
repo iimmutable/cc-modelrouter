@@ -218,6 +218,11 @@ Tests must follow Go's black-box/white-box testing patterns:
 | **White-box** | `<module>/` (alongside source) | `package <module>` | Private + exported members |
 | **Cross-module** | `test/` (root) | Varies | Multiple modules |
 
+**Rules:**
+- `<module>/test/` files **must** use `package <module>_test` and **must only reference exported symbols**
+- If a test references unexported symbols, it **must** be alongside source with `package <module>`
+- **Never** move a white-box test to a `test/` subdirectory — package isolation prevents access to unexported symbols and it will break compilation
+
 **Examples:**
 
 | Location | Status | Reason |
@@ -226,8 +231,10 @@ Tests must follow Go's black-box/white-box testing patterns:
 | `internal/proxy/handler_test.go` | ✅ Allowed | White-box (needs private access) |
 | `test/integration/provider_test.go` | ✅ Correct | Cross-module test |
 | `internal/proxy/utils_test.go` (no `utils.go`) | ❌ Wrong | Should be in `test/` subfolder |
+| `<module>/test/foo_test.go` with `package <module>` | ❌ Wrong | Wrong package — use `_test` suffix |
+| `<module>/test/foo_test.go` referencing unexported symbol | ❌ Wrong | Must be alongside source |
 
-**Pre-commit hook validates test locations.** See `.githooks/pre-commit`.
+**Pre-commit hook validates both placement and compilation.** See `.githooks/pre-commit`.
 
 ---
 

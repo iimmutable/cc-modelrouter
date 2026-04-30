@@ -1,4 +1,4 @@
-package test
+package transformer_test
 
 import (
 	"encoding/json"
