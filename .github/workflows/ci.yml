@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev-local]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./cmd/ccrouter
+
+      - name: Test
+        run: go test ./...
+
+      - name: Security tests
+        run: go test -v ./test/security

@@ -15,8 +15,27 @@ func NewStatusCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show router instance status",
-		Long:  "Lists all router instances with their status.",
-		RunE:  runStatus,
+		Long: `Lists all router instances with their status.
+
+Displays a table of all router instances including:
+  - Instance ID: Unique identifier for the instance
+  - PID: Process ID of the running process
+  - Port: Port number the instance is listening on
+  - Status: "running" if alive, "dead" if process terminated
+  - Config: Configuration source (project, global, or custom)
+  - Uptime: How long the instance has been running
+
+Flags:
+  -a, --all    Show all instances including dead ones.
+                By default, only running instances are shown.
+
+Examples:
+  # Show running instances
+  ccrouter status
+
+  # Show all instances including dead ones
+  ccrouter status --all`,
+		RunE: runStatus,
 	}
 
 	cmd.Flags().BoolP("all", "a", false, "Show all instances including dead ones")

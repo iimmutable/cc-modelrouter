@@ -1,0 +1,21 @@
+{
+  "server": {
+    "port": 18081,
+    "host": "localhost"
+  },
+  "providers": {
+    "openrouter": {
+      "apiKey": "${CCROUTER_OPENROUTER_API_KEY}",
+      "baseURL": "https://openrouter.ai/api",
+      "transformer": "anthropic",
+      "models": ["anthropic/claude-sonnet-4.5", "anthropic/claude-haiku-4.5"]
+    }
+  },
+  "router": {
+    "routes": {
+      "default": "openrouter:anthropic/claude-sonnet-4.5"
+    },
+    "maxRetries": 1,
+    "retryDelay": "500ms"
+  }
+}

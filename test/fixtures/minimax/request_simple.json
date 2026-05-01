@@ -1,0 +1,10 @@
+{
+  "model": "abab6.5s-chat",
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, how are you?"
+    }
+  ]
+}

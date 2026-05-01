@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 )
@@ -44,6 +45,7 @@ func NewClient(cfg *ClientConfig) (*HTTPClient, error) {
 		MaxIdleConns:        cfg.MaxIdleConns,
 		IdleConnTimeout:     idleTimeout,
 		MaxIdleConnsPerHost: 10,
+		DisableKeepAlives:   cfg.DisableKeepAlives, // For providers with connection issues
 	}
 
 	return &HTTPClient{
@@ -56,12 +58,62 @@ func NewClient(cfg *ClientConfig) (*HTTPClient, error) {
 	}, nil
 }
 
+// NewStreamingClient creates an HTTP client optimized for streaming requests.
+// It has no Timeout (relies on context cancellation) but maintains
+// connection timeouts for robustness. Use this for SSE streaming requests.
+func NewStreamingClient(cfg *ClientConfig) (*HTTPClient, error) {
+	defaults := Defaults()
+
+	maxRetries := cfg.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = defaults.MaxRetries
+	}
+	retryDelay := cfg.RetryDelay
+	if retryDelay == 0 {
+		retryDelay = defaults.RetryDelay
+	}
+
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 60 * time.Second, // Wait up to 60s for headers
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		DisableKeepAlives:    cfg.DisableKeepAlives, // For providers with connection issues
+	}
+
+	return &HTTPClient{
+		client: &http.Client{
+			Timeout:   0, // NO timeout for streaming - use context cancellation
+			Transport: transport,
+		},
+		maxRetries: maxRetries,
+		retryDelay: retryDelay,
+	}, nil
+}
+
 // Do executes an HTTP request with retry logic.
 func (c *HTTPClient) Do(req *http.Request) (*http.Response, error) {
 	var lastErr error
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
+			// CRITICAL: Restore body using GetBody for retries
+			// After the first request, the body is consumed. GetBody allows
+			// getting a fresh reader for the same content.
+			if req.GetBody != nil {
+				newBody, err := req.GetBody()
+				if err != nil {
+					lastErr = fmt.Errorf("failed to get fresh body for retry: %w", err)
+					continue
+				}
+				req.Body = newBody
+			}
+
 			select {
 			case <-time.After(c.retryDelay):
 			case <-req.Context().Done():

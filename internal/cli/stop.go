@@ -15,8 +15,28 @@ func NewStopCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop [instance-id]",
 		Short: "Stop a router instance",
-		Long:  "Stops a running router instance. If no instance ID is provided, stops all running instances.",
-		RunE:  runStop,
+		Long: `Stops a running router instance. If no instance ID is provided, stops all running instances.
+
+Arguments:
+  instance-id    Optional. The specific instance ID to stop.
+                  Use "ccrouter status" to list all instances.
+                  If omitted, stops all running instances.
+
+Flags:
+  -f, --force    Force stop using SIGKILL instead of SIGTERM.
+                  Use this when the instance doesn't respond to normal shutdown.
+                  This is an immediate termination without graceful shutdown.
+
+Examples:
+  # Stop all running instances
+  ccrouter stop
+
+  # Stop a specific instance
+  ccrouter stop abc123def456
+
+  # Force stop an unresponsive instance
+  ccrouter stop --force abc123def456`,
+		RunE: runStop,
 	}
 
 	cmd.Flags().BoolP("force", "f", false, "Force stop (SIGKILL)")
