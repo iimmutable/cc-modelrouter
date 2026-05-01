@@ -49,3 +49,7 @@ package.json
 
 # Git worktrees (isolated workspaces)
 .worktrees/
+
+# Development artifacts (plans, agent experiences — excluded from master)
+.claude/
+plans/
