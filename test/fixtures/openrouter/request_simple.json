@@ -1,0 +1,10 @@
+{
+  "model": "anthropic/claude-3.5-sonnet",
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, how are you?"
+    }
+  ]
+}

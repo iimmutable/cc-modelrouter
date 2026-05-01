@@ -7,8 +7,15 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
+
+// sseBufferPool pools scanner buffers to reduce per-request allocations.
+// Each concurrent streaming request borrows a buffer and returns it after completion.
+var sseBufferPool = sync.Pool{
+	New: func() any { return make([]byte, 0, 64*1024) },
+}
 
 // SSEWriter handles Server-Sent Events writing.
 type SSEWriter struct {
@@ -66,16 +73,33 @@ func ParseSSEEvent(line string) (event string, data []byte, err error) {
 
 // SSEScanner scans SSE events from a reader.
 type SSEScanner struct {
-	scanner *bufio.Scanner
-	event   string
-	data    []byte
-	err     error
+	scanner  *bufio.Scanner
+	event    string
+	data     []byte
+	err      error
+	poolBuf  []byte // tracks the pooled buffer for return on Close
 }
 
 // NewSSEScanner creates a new SSE scanner.
 func NewSSEScanner(r io.Reader) *SSEScanner {
+	scanner := bufio.NewScanner(r)
+	// Increase max token size from default 64KB (bufio.MaxScanTokenSize) to 1MB
+	// This ensures large SSE payloads (e.g., long AI responses) are handled correctly.
+	// Buffer is pooled to reduce per-request allocations.
+	buf := sseBufferPool.Get().([]byte)
+	scanner.Buffer(buf, 1024*1024)
 	return &SSEScanner{
-		scanner: bufio.NewScanner(r),
+		scanner: scanner,
+		poolBuf: buf,
+	}
+}
+
+// Close returns the scanner's buffer to the pool.
+// Must be called when the scanner is no longer needed.
+func (s *SSEScanner) Close() {
+	if s.poolBuf != nil {
+		sseBufferPool.Put(s.poolBuf[:0])
+		s.poolBuf = nil
 	}
 }
 
@@ -85,14 +109,16 @@ func (s *SSEScanner) Scan() bool {
 	s.data = nil
 
 	var eventData strings.Builder
+	var hasData bool
 
 	for s.scanner.Scan() {
 		line := s.scanner.Text()
 
 		if line == "" {
 			// Empty line marks end of event
-			if eventData.Len() > 0 {
+			if hasData {
 				s.data = []byte(eventData.String())
+				hasData = false
 				return true
 			}
 			continue
@@ -101,11 +127,21 @@ func (s *SSEScanner) Scan() bool {
 		if strings.HasPrefix(line, "event:") {
 			s.event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 		} else if strings.HasPrefix(line, "data:") {
+			// Accumulate data lines - trim leading space after "data:" prefix
+			// but preserve internal whitespace for multi-line JSON
+			dataContent := strings.TrimLeft(strings.TrimPrefix(line, "data:"), " ")
 			if eventData.Len() > 0 {
 				eventData.WriteString("\n")
 			}
-			eventData.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			eventData.WriteString(dataContent)
+			hasData = true
 		}
+	}
+
+	// Handle case where stream ends without trailing newline
+	if hasData {
+		s.data = []byte(eventData.String())
+		return true
 	}
 
 	s.err = s.scanner.Err()

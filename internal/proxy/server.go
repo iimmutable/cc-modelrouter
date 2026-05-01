@@ -4,11 +4,15 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
+	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/iimmutable/cc-modelrouter/internal/config"
+	"github.com/iimmutable/cc-modelrouter/internal/logging"
 )
 
 // ServerConfig represents server configuration.
@@ -29,11 +33,15 @@ func Defaults() *ServerConfig {
 
 // Server is the HTTP proxy server.
 type Server struct {
-	config  *ServerConfig
-	server  *http.Server
-	handler *Handler
-	mu      sync.Mutex
-	running bool
+	config       *ServerConfig
+	server       *http.Server
+	handler      *Handler
+	usageTracker UsageTracker
+	instanceID   string
+	mu           sync.Mutex
+	running      bool
+	ready        chan struct{} // Closed when server is ready to accept connections
+	actualAddr   string        // Actual bound address (differs from config when port is 0)
 }
 
 // NewServer creates a new proxy server.
@@ -68,33 +76,130 @@ func (s *Server) SetProviderClients(clients map[string]HTTPClient) {
 	s.handler.SetProviderClients(clients)
 }
 
+// SetStreamingClients sets the provider clients for streaming requests.
+// These clients have no timeout and are optimized for SSE streaming.
+func (s *Server) SetStreamingClients(clients map[string]HTTPClient) {
+	s.handler.SetStreamingClients(clients)
+}
+
 // SetConfig sets the configuration.
 func (s *Server) SetConfig(cfg *config.Config) {
 	s.handler.SetConfig(cfg)
 }
 
-// Start starts the server.
+// SetUsageTracker sets the usage tracker.
+func (s *Server) SetUsageTracker(tracker UsageTracker) {
+	s.usageTracker = tracker
+	s.handler.SetUsageTracker(tracker)
+}
+
+// SetInstanceID sets the instance ID.
+func (s *Server) SetInstanceID(id string) {
+	s.instanceID = id
+	s.handler.SetInstanceID(id)
+}
+
+// SetRequestInterceptors sets the request interceptors.
+func (s *Server) SetRequestInterceptors(interceptors []RequestInterceptor) {
+	s.handler.SetRequestInterceptors(interceptors)
+}
+
+// SetResponseInterceptors sets the response interceptors.
+func (s *Server) SetResponseInterceptors(interceptors []ResponseInterceptor) {
+	s.handler.SetResponseInterceptors(interceptors)
+}
+
+// SetStreamingInterceptors sets the streaming interceptors.
+func (s *Server) SetStreamingInterceptors(interceptors []StreamingResponseInterceptor) {
+	s.handler.SetStreamingInterceptors(interceptors)
+}
+
+// SetAdminToken sets the admin API token for runtime management.
+func (s *Server) SetAdminToken(token string) {
+	s.handler.SetAdminToken(token)
+}
+
+// SetActiveProfile sets the initial active profile for the handler and router.
+func (s *Server) SetActiveProfile(profile string) {
+	s.handler.SetActiveProfile(profile)
+	// Also set it on the router if it's already set
+	if s.handler.router != nil {
+		s.handler.router.SetActiveProfile(profile)
+	}
+}
+
+// GetAdminToken returns the admin API token.
+func (s *Server) GetAdminToken() string {
+	return s.handler.GetAdminToken()
+}
+
+// AddRequestInterceptor adds a single request interceptor.
+func (s *Server) AddRequestInterceptor(interceptor RequestInterceptor) {
+	s.handler.AddRequestInterceptor(interceptor)
+}
+
+// AddResponseInterceptor adds a single response interceptor.
+func (s *Server) AddResponseInterceptor(interceptor ResponseInterceptor) {
+	s.handler.AddResponseInterceptor(interceptor)
+}
+
+// AddStreamingInterceptor adds a single streaming interceptor.
+func (s *Server) AddStreamingInterceptor(interceptor StreamingResponseInterceptor) {
+	s.handler.AddStreamingInterceptor(interceptor)
+}
+
+// Start starts the server and waits until it's ready to accept connections.
 func (s *Server) Start() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if s.running {
+		s.mu.Unlock()
 		return fmt.Errorf("server already running")
 	}
 
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
+
+	// Create error logger that writes to our configured destination
+	// Use standard log package for http.Server.ErrorLog compatibility
+	errorLogWriter := logging.GetWriter()
+	if errorLogWriter == nil {
+		errorLogWriter = io.Discard
+	}
+
 	s.server = &http.Server{
 		Addr:         addr,
 		Handler:      s.handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 5 * time.Minute, // Long for streaming
+		ErrorLog:     log.New(errorLogWriter, "", 0), // No prefix, uses our logging
 	}
 
-	s.running = true
+	// Create readiness channel before starting
+	ready := make(chan struct{})
+	s.ready = ready
 
+	s.running = true
+	s.mu.Unlock()
+
+	// Create listener explicitly to know when we're ready to accept connections
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		s.mu.Lock()
+		s.running = false
+		s.ready = nil
+		s.mu.Unlock()
+		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+
+	// Store the actual bound address (differs from config when port is 0)
+	s.actualAddr = listener.Addr().String()
+
+	// Launch server in goroutine
 	go func() {
-		if err := s.server.ListenAndServe(); err != http.ErrServerClosed {
-			// Log error
+		// Signal readiness immediately - listener is already accepting connections
+		close(ready)
+		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			// Log error - in production this should use proper logging
 		}
 	}()
 
@@ -110,14 +215,26 @@ func (s *Server) Stop(ctx context.Context) error {
 		return nil
 	}
 
+	// Shutdown tracker if it exists
+	if shutdowner, ok := s.usageTracker.(interface{ Shutdown() }); ok {
+		shutdowner.Shutdown()
+	}
+
 	err := s.server.Shutdown(ctx)
 	s.running = false
+	s.ready = nil // Clean up readiness channel
 	return err
 }
 
-// Addr returns the server address.
+// Addr returns the configured server address.
 func (s *Server) Addr() string {
 	return fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
+}
+
+// ActualAddr returns the actual bound address after Start().
+// When port 0 is used, this returns the OS-assigned port.
+func (s *Server) ActualAddr() string {
+	return s.actualAddr
 }
 
 // IsRunning returns true if the server is running.

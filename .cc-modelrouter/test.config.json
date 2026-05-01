@@ -5,9 +5,10 @@
   },
   "providers": {
     "bigmodel": {
-      "apiKey": "${BIGMODEL_API_KEY}",
+      "apiKey": "${CCROUTER_BIGMODEL_API_KEY}",
       "baseURL": "https://open.bigmodel.cn/api/anthropic",
-      "models": ["glm-4.7"]
+      "transformer": "glm",
+      "models": ["glm-4.7", "glm-4.6v", "glm-4.5-air"]
     }
   },
   "router": {

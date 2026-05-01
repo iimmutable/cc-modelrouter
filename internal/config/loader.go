@@ -19,19 +19,55 @@ func ProjectConfigPath(projectRoot string) string {
 	return filepath.Join(projectRoot, ".cc-modelrouter", "config.json")
 }
 
-// Load loads configuration from a file.
+// Load loads configuration from a file, interpolating ${VAR} references.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	// Interpolate environment variables
-	expanded := interpolateEnvVars(string(data))
+	// Interpolate environment variables and get warnings
+	expanded, warnings := interpolateEnvVars(string(data))
+
+	// Print warnings for missing environment variables
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
+	}
 
 	cfg := Defaults()
 	if err := json.Unmarshal([]byte(expanded), cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Migrate profiles from old location (Config.Profiles) to new location (Router.Profiles)
+	// for backward compatibility with older config files.
+	if len(cfg.Profiles) > 0 && len(cfg.Router.Profiles) == 0 {
+		cfg.Router.Profiles = cfg.Profiles
+		cfg.Profiles = nil // Clear old location - won't be saved
+	}
+
+	return cfg, nil
+}
+
+// LoadRaw loads configuration from a file without interpolating ${VAR} references.
+// This preserves environment variable placeholders in the in-memory config,
+// so they are not lost when the config is saved back to disk.
+func LoadRaw(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	cfg := Defaults()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Migrate profiles from old location (Config.Profiles) to new location (Router.Profiles)
+	// for backward compatibility with older config files.
+	if len(cfg.Profiles) > 0 && len(cfg.Router.Profiles) == 0 {
+		cfg.Router.Profiles = cfg.Profiles
+		cfg.Profiles = nil // Clear old location - won't be saved
 	}
 
 	return cfg, nil
@@ -82,8 +118,10 @@ func Save(cfg *Config, path string) error {
 }
 
 // interpolateEnvVars replaces ${VAR} and $VAR with environment variable values.
-func interpolateEnvVars(s string) string {
+// Returns the expanded string and a list of warnings for missing environment variables.
+func interpolateEnvVars(s string) (string, []string) {
 	result := s
+	var warnings []string
 
 	// Replace ${VAR} patterns
 	for {
@@ -99,6 +137,9 @@ func interpolateEnvVars(s string) string {
 
 		varName := result[start+2 : end]
 		varValue := os.Getenv(varName)
+		if varValue == "" {
+			warnings = append(warnings, fmt.Sprintf("environment variable '%s' is not set", varName))
+		}
 		result = result[:start] + varValue + result[end+1:]
 	}
 
@@ -112,9 +153,11 @@ func interpolateEnvVars(s string) string {
 			varValue := os.Getenv(varName)
 			if varValue != "" {
 				result = strings.ReplaceAll(result, word, varValue)
+			} else {
+				warnings = append(warnings, fmt.Sprintf("environment variable '%s' is not set", varName))
 			}
 		}
 	}
 
-	return result
+	return result, warnings
 }

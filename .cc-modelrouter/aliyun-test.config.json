@@ -1,0 +1,21 @@
+{
+  "server": {
+    "port": 18081,
+    "host": "localhost"
+  },
+  "providers": {
+    "aliyun": {
+      "apiKey": "${CCROUTER_ALIYUN_API_KEY}",
+      "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+      "transformer": "anthropic",
+      "models": ["glm-4.7", "MiniMax-M2.5"]
+    }
+  },
+  "router": {
+    "routes": {
+      "default": "aliyun:MiniMax-M2.5"
+    },
+    "maxRetries": 1,
+    "retryDelay": "500ms"
+  }
+}

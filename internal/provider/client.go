@@ -8,13 +8,14 @@ import (
 
 // ClientConfig represents client configuration.
 type ClientConfig struct {
-	BaseURL         string
-	APIKey          string
-	Timeout         string
-	MaxIdleConns    int
-	IdleConnTimeout string
-	MaxRetries      int
-	RetryDelay      time.Duration
+	BaseURL           string
+	APIKey            string
+	Timeout           string
+	MaxIdleConns      int
+	IdleConnTimeout   string
+	MaxRetries        int
+	RetryDelay        time.Duration
+	DisableKeepAlives bool // Disable HTTP keep-alive for providers with connection issues (e.g., BigModel)
 }
 
 // Client is the interface for provider clients.

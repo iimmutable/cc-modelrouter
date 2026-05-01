@@ -15,8 +15,18 @@
 # Output
 /bin/
 
+# Coverage
+coverage.out
+*.cover.html
+
 # Go workspace
 go.work
+
+# Go cache
+.gocache/
+.mod-cache/
+.go-cache/
+.go-home/
 
 # IDE
 .idea/
@@ -27,3 +37,15 @@ go.work
 
 # Instance files
 ~/.cc-modelrouter/instances/
+
+# Debug log files
+debug.log
+*.log
+
+# Node.js (auxiliary tooling only)
+node_modules/
+package-lock.json
+package.json
+
+# Git worktrees (isolated workspaces)
+.worktrees/

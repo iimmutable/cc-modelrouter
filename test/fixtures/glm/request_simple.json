@@ -1,0 +1,10 @@
+{
+  "model": "glm-4",
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, how are you?"
+    }
+  ]
+}

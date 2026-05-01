@@ -18,7 +18,34 @@ func NewLogsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs [instance-id]",
 		Short: "Show instance logs",
-		Long:  "Shows logs for a router instance.",
+		Long: `Shows logs for a router instance.
+
+Note: File-based logging is not yet implemented. Currently, logs are only
+available via stdout/stderr of the running process.
+
+Arguments:
+  instance-id    Optional. The specific instance ID to show logs for.
+                  If omitted, shows logs for the most recent running instance.
+
+Flags:
+  -f, --follow    Follow log output (like tail -f).
+                  Continuously display new log entries as they are written.
+
+  -n, --tail <number>  Number of lines to show from the end of the log.
+                      Default: 100
+
+Examples:
+  # Show logs from the most recent instance
+  ccrouter logs
+
+  # Show logs from a specific instance
+  ccrouter logs abc123def456
+
+  # Follow logs in real-time
+  ccrouter logs --follow
+
+  # Show last 50 lines
+  ccrouter logs --tail 50`,
 		RunE:  runLogs,
 	}
 

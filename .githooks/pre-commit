@@ -1,0 +1,86 @@
+#!/bin/bash
+
+# Check for misplaced test files
+# Allows: */test/*.go (module test folders)
+# Allows: test/*.go (root test folder)
+# Allows: *_test.go alongside source (white-box tests)
+# Rejects: test files not following these patterns
+
+MISPLACED=0
+
+# Get all staged test files (excluding deleted)
+STAGED_TESTS=$(git diff --cached --name-only --diff-filter=ACM | grep '_test\.go$' || true)
+
+for FILE in $STAGED_TESTS; do
+    DIR=$(dirname "$FILE")
+    BASENAME=$(basename "$FILE")
+
+    # Allowed locations:
+    # 1. In a test/ subfolder (e.g., internal/proxy/test/)
+    # 2. In root test/ folder
+    # 3. Alongside source files (white-box tests) - but warn
+
+    if [[ "$DIR" == "test" || "$DIR" == */test || "$DIR" == test/* ]]; then
+        # In a test folder - allowed
+        continue
+    fi
+
+    # Check if this is alongside source (white-box test)
+    # First check for exact name match (e.g., handler_test.go alongside handler.go)
+    SOURCE_FILE="${FILE%_test.go}.go"
+    if git ls-files --error-unmatch "$SOURCE_FILE" >/dev/null 2>&1; then
+        echo "ℹ️  White-box test (allowed): $FILE"
+        continue
+    fi
+
+    # Also allow white-box tests in directories that contain any non-test .go source files
+    # (e.g., integration_test.go in a directory with anthropic.go, glm_anthropic.go, etc.)
+    if git ls-files --error-unmatch "$DIR"/*.go >/dev/null 2>&1; then
+        # Check if any non-test .go files exist in the directory
+        HAS_SOURCE=$(git ls-files "$DIR"/*.go 2>/dev/null | grep -v '_test\.go$' | head -1)
+        if [ -n "$HAS_SOURCE" ]; then
+            echo "ℹ️  White-box test (allowed): $FILE"
+            continue
+        fi
+    fi
+
+    # Misplaced test file
+    echo "❌ Test file misplaced: $FILE"
+    PARENT_DIR=$(dirname "$FILE")
+    echo "   Module tests should be in: ${PARENT_DIR}/test/"
+    MISPLACED=1
+done
+
+if [ $MISPLACED -eq 1 ]; then
+    echo ""
+    echo "Commit rejected. Move test files to appropriate test/ folders."
+    echo "If you need to test private members, keep the test alongside the source."
+    exit 1
+fi
+
+# Verify test packages in <module>/test/ directories compile.
+# This catches wrong package names and white-box tests in black-box locations.
+if [ -n "$STAGED_TESTS" ]; then
+    TEST_DIRS=$(echo "$STAGED_TESTS" | xargs -I{} dirname {} | sort -u)
+    for DIR_PATH in $TEST_DIRS; do
+        case "$DIR_PATH" in
+            */test)
+                if ls "$DIR_PATH"/*_test.go >/dev/null 2>&1; then
+                    if ! go vet "./$DIR_PATH" 2>/dev/null; then
+                        echo "⚠️  Test package fails to compile: $DIR_PATH"
+                        echo "   Fix package declaration or move white-box tests alongside source."
+                        MISPLACED=1
+                    fi
+                fi
+                ;;
+        esac
+    done
+
+    if [ $MISPLACED -eq 1 ]; then
+        echo ""
+        echo "Commit rejected. Fix compilation errors in test packages."
+        exit 1
+    fi
+fi
+
+exit 0
