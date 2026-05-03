@@ -50,7 +50,14 @@ The easiest way is the interactive TUI wizard:
 ccrouter config
 ```
 
-![Config Wizard](assets/config-wizard.png)
+**Configuration Wizard:**
+
+| | | |
+|---|---|---|
+| ![Main Menu](assets/config-wizard-main.png) | ![Providers](assets/config-wizard-providers.png) | ![Edit Provider](assets/config-wizard-edit-provider.png) |
+| *Main menu with Providers, Routes, Proxy, Logging, and View Config options* | *Provider list with base URLs and supported models* | *Edit Provider form for name, URL, and models* |
+| ![Routes](assets/config-wizard-routes.png) | ![Edit Route](assets/config-wizard-edit-route.png) | |
+| *Routes view with failover chains per route* | *Add/Edit Route form for configuring provider chains* | |
 
 Or create `~/.cc-modelrouter/config.json` manually:
 
