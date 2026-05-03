@@ -52,3 +52,6 @@ package.json
 
 # Git worktrees (isolated workspaces)
 .worktrees/
+
+# Dev artifacts (auto-excluded by merge-trunk)
+.claude/

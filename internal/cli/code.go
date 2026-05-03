@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,7 +29,7 @@ import (
 // NewCodeCommand creates the code command.
 func NewCodeCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "code",
+		Use:   "code [flags] [-- <claude-args>...]",
 		Short: "Start router and launch Claude Code",
 		Long: `Starts the router server and launches Claude Code with the router configured as the API endpoint.
 
@@ -59,7 +60,8 @@ Flags:
                            Overrides config file setting. Default: from config.
   --log-level <level>       Log level: "debug", "info", "warn", or "error".
                            Overrides config file setting. Default: from config.`,
-		RunE: runCode,
+		RunE:                  runCode,
+		DisableFlagParsing:    true,
 	}
 
 	cmd.Flags().StringP("config", "c", "", "Path to config file")
@@ -71,12 +73,92 @@ Flags:
 	return cmd
 }
 
-func runCode(cmd *cobra.Command, args []string) error {
-	// Get flags
-	configPath, _ := cmd.Flags().GetString("config")
-	logDestination, _ := cmd.Flags().GetString("log-destination")
-	portFlag, _ := cmd.Flags().GetInt("port")
-	profileFlag, _ := cmd.Flags().GetString("profile")
+func runCode(cmd *cobra.Command, rawArgs []string) error {
+	// --- Manual flag parsing ---
+	var configPath, logDestination, logLevel, profileFlag string
+	var portFlag int
+	var claudeArgs []string
+
+	knownFlagsWithValues := map[string]bool{
+		"--config": true, "-c": true,
+		"--log-destination": true,
+		"--log-level": true,
+		"--port": true, "-p": true,
+		"--profile": true,
+	}
+
+	skipNext := false
+	for i := 0; i < len(rawArgs); i++ {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		arg := rawArgs[i]
+
+		// Handle --help
+		if arg == "--help" || arg == "-h" {
+			cmd.Usage()
+			return nil
+		}
+
+		// Handle -- separator: everything after goes to Claude
+		if arg == "--" {
+			claudeArgs = append(claudeArgs, rawArgs[i+1:]...)
+			break
+		}
+
+		// Handle --flag=value syntax
+		consumed := false
+		if strings.Contains(arg, "=") {
+			for flag := range knownFlagsWithValues {
+				if strings.HasPrefix(arg, flag+"=") {
+					val := arg[len(flag)+1:]
+					switch flag {
+					case "--config", "-c":
+						configPath = val
+					case "--log-destination":
+						logDestination = val
+					case "--log-level":
+						logLevel = val
+					case "--port", "-p":
+						portFlag, _ = strconv.Atoi(val)
+					case "--profile":
+						profileFlag = val
+					}
+					consumed = true
+					break
+				}
+			}
+		}
+		if consumed {
+			continue
+		}
+
+		if knownFlagsWithValues[arg] {
+			// Consume this flag and its value
+			if i+1 < len(rawArgs) {
+				val := rawArgs[i+1]
+				skipNext = true
+				switch arg {
+				case "--config", "-c":
+					configPath = val
+				case "--log-destination":
+					logDestination = val
+				case "--log-level":
+					logLevel = val
+				case "--port", "-p":
+					portFlag, _ = strconv.Atoi(val)
+				case "--profile":
+					profileFlag = val
+				}
+			}
+			continue
+		}
+
+		// Not a known flag — pass through to Claude
+		claudeArgs = append(claudeArgs, arg)
+	}
+	// --- End manual flag parsing ---
 
 	// Get working directory
 	projectRoot, err := os.Getwd()
@@ -129,7 +211,6 @@ func runCode(cmd *cobra.Command, args []string) error {
 	}
 
 	// Apply log level override from flag
-	logLevel, _ := cmd.Flags().GetString("log-level")
 	if logLevel != "" {
 		cfg.Logging.Level = logLevel
 		cfg.Logging.Enabled = true // CLI flag implicitly enables logging
@@ -354,7 +435,7 @@ func runCode(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Launch Claude Code
-	claudeCmd := exec.Command(claudePath)
+	claudeCmd := exec.Command(claudePath, claudeArgs...)
 	claudeCmd.Stdin = os.Stdin
 	claudeCmd.Stdout = os.Stdout
 	claudeCmd.Stderr = os.Stderr
