@@ -6,6 +6,8 @@
 
 Code with any frontier LLM from Claude Code — no vendor lock-in, no format headaches.
 
+#ClaudeCode #LLMRouter #MultiProvider #cc #ccrouter #VibeCoding #AgenticCoding
+
 The vibe coding landscape moves fast. Last month's best model might not be this month's. cc-modelrouter gives you a single local proxy that auto-routes Claude Code requests to any provider — GLM, GPT, Claude, Gemini, Kimi, Qwen — handling every API format difference transparently.
 
 ```
@@ -47,6 +49,8 @@ The easiest way is the interactive TUI wizard:
 ```bash
 ccrouter config
 ```
+
+![Config Wizard](assets/config-wizard.png)
 
 Or create `~/.cc-modelrouter/config.json` manually:
 
@@ -124,18 +128,77 @@ Routes are detected automatically from request characteristics. Configure which 
 
 **Thinking level cascade:** If `ultrathink` is not configured, it falls back to `thinkMore`, then `think`.
 
-Routes use semicolon-separated failover chains: `"openrouter:claude-sonnet-4.6;bigmodel:glm-5.1"` tries OpenRouter first, then GLM on failure.
+## Route Profiles
+
+Switch between entire routing configurations without restarting. Perfect for toggling between "standard", "cost-optimized", or "speed-first" strategies on the fly.
+
+**At launch:**
+```bash
+ccrouter code --profile cost-opt
+ccrouter start --profile speed-first
+```
+
+**Hot-switch mid-session** using the `/profile` slash command in Claude Code:
+```
+/profile cost-opt    # switch to cheaper models
+/profile standard    # switch back to default
+/profile             # list all profiles
+```
+
+Profiles are defined in your config:
+```json
+{
+  "router": {
+    "profiles": {
+      "standard": {
+        "name": "Standard",
+        "routes": {
+          "default": "openrouter:anthropic/claude-sonnet-4.6",
+          "ultrathink": "bigmodel:glm-5.1"
+        }
+      },
+      "cost-opt": {
+        "name": "Cost Optimized",
+        "routes": {
+          "default": "bigmodel:glm-4.7",
+          "ultrathink": "bigmodel:glm-5.1"
+        }
+      }
+    }
+  }
+}
+```
+
+## Auto-Failover
+
+Never lose a session to a provider outage. Define failover chains per route using semicolon-separated `provider:model` pairs — ccrouter automatically tries the next provider if one fails:
+
+```json
+"default": "openrouter:anthropic/claude-sonnet-4.6;bigmodel:glm-5.1;gemini:gemini-2.5-pro"
+```
+
+If OpenRouter is down, it seamlessly falls back to GLM, then Gemini. Max attempts = 2× the number of providers in the chain.
 
 ## Features
 
-- **Sequential Failover** — loops through providers in config order, max 2x the number of providers
-- **Route Profiles** — switch between routing configs without restart (`ccrouter profile switch <name>`)
-- **Live Monitor** — real-time token usage TUI (`ccrouter monitor`)
 - **Config Wizard** — full-screen interactive TUI for setup (`ccrouter config`)
 - **Request Compaction** — automatic request reduction for providers with context window limits
 - **Instance Isolation** — each `ccrouter code` gets its own port, PID, and log file
 - **Project Config** — per-project config completely overrides global settings
 - **Usage Tracking** — SQLite-based token tracking with buffered writes
+
+## Security
+
+- **API keys stay local** — requests are proxied through localhost; keys never leave your machine.
+- **Automatic header sanitization** — 11+ sensitive headers redacted case-insensitively (Authorization, X-Api-Key, Cookie, etc.).
+- **Environment variable interpolation** — use `${VAR_NAME}` in config to keep secrets out of config files.
+- **Verified by tests** — security test suite verifies secrets never appear in log output.
+
+## Live Monitor
+
+Real-time token usage dashboard. Track requests, tokens, and fallbacks by route and model — with live log tailing.
+
+![Live Monitor](assets/monitor-tui.png)
 
 ## CLI
 
@@ -190,6 +253,15 @@ cc-modelrouter/
 See [docs/architecture.md](docs/architecture.md) for the full architecture and [docs/transformers.md](docs/transformers.md) for transformer details. See [docs/testing.md](docs/testing.md) for test patterns and [docs/troubleshooting.md](docs/troubleshooting.md) for common issues.
 
 PRs welcome.
+
+## Support
+
+If cc-modelrouter saves you from vendor lock-in, consider buying me a coffee:
+
+| Network | Address |
+|---------|---------|
+| **Solana (SOL)** | `GjpzLx3aX1MvpMVprdZm2hSyzHTSFJAgjwChT1fM1uKv` |
+| **Ethereum (USDC)** | `0x0402e35252476230696dc639f502C14e4c92dfD6` |
 
 ## License
 
