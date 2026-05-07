@@ -385,11 +385,16 @@ func runCode(cmd *cobra.Command, rawArgs []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to create .claude directory: %v\n", err)
 	}
 
-	settings := map[string]interface{}{
-		"env": map[string]string{
-			"ANTHROPIC_BASE_URL": fmt.Sprintf("http://%s", actualAddr),
-		},
+	settings := map[string]interface{}{}
+	// Read existing settings to preserve entries from other instances
+	if existing, err := os.ReadFile(settingsPath); err == nil {
+		json.Unmarshal(existing, &settings)
 	}
+	if settings["env"] == nil {
+		settings["env"] = map[string]interface{}{}
+	}
+	envMap := settings["env"].(map[string]interface{})
+	envMap["ANTHROPIC_BASE_URL"] = fmt.Sprintf("http://%s", actualAddr)
 
 	settingsData, err := json.MarshalIndent(settings, "", "  ")
 	if err == nil {
@@ -397,7 +402,24 @@ func runCode(cmd *cobra.Command, rawArgs []string) error {
 			fmt.Fprintf(os.Stderr, "Warning: failed to write settings.local.json: %v\n", err)
 		} else {
 			defer func() {
-				os.Remove(settingsPath)
+				// Only delete if file still points to our proxy.
+				// If another instance overwrote it, the file belongs to them.
+				data, err := os.ReadFile(settingsPath)
+				if err == nil {
+					var s map[string]interface{}
+					if json.Unmarshal(data, &s) == nil {
+						if env, ok := s["env"].(map[string]interface{}); ok {
+							if url, ok := env["ANTHROPIC_BASE_URL"].(string); ok && url == fmt.Sprintf("http://%s", actualAddr) {
+								os.Remove(settingsPath)
+							}
+						}
+					}
+				} else if os.IsNotExist(err) {
+					// File already gone, nothing to do
+				} else {
+					// Unexpected error, try to remove anyway
+					os.Remove(settingsPath)
+				}
 			}()
 			fmt.Printf("Created %s to route requests through the proxy\n", settingsPath)
 		}
@@ -411,7 +433,17 @@ func runCode(cmd *cobra.Command, rawArgs []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to create profile slash command: %v\n", err)
 	} else {
 		defer func() {
-			os.Remove(profileCmdPath)
+			// Only delete if no other ccrouter code instance is running in this project.
+			instances, _ := daemon.ListInstances()
+			activeInProject := 0
+			for _, inst := range instances {
+				if inst.ProjectRoot == projectRoot && daemon.IsRunning(inst) {
+					activeInProject++
+				}
+			}
+			if activeInProject == 0 {
+				os.Remove(profileCmdPath)
+			}
 		}()
 		fmt.Printf("Created %s for profile switching\n", profileCmdPath)
 	}
