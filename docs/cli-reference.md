@@ -20,7 +20,7 @@ go install github.com/iimmutable/cc-modelrouter/cmd/ccrouter@latest
 Start the router and launch Claude Code.
 
 ```bash
-ccrouter code [flags]
+ccrouter code [flags] [-- <claude-args>...]
 ```
 
 **Flags:**
@@ -39,9 +39,31 @@ ccrouter code [flags]
 - Creates a profile slash command for runtime profile switching
 - Handles graceful shutdown on SIGINT/SIGTERM
 
+**Permission Mode:**
+
+By default, `ccrouter code` passes `--permission-mode auto` to Claude Code so you don't have to approve every tool call. This behavior can be controlled:
+
+| Scenario | Behavior |
+|----------|----------|
+| `ccrouter code` | `--permission-mode auto` applied automatically |
+| `ccrouter code --conservative` | No `--permission-mode` flag sent (uses Claude Code defaults) |
+| `ccrouter code -- --permission-mode default` | Your explicit choice is respected |
+
+**Argument Passthrough:**
+
+Unknown flags are passed through to Claude Code. Use `--` to explicitly separate router flags from Claude Code flags:
+
+```bash
+# Pass model flag to Claude Code
+ccrouter code -- --model claude-opus-4-6
+
+# Mix router and Claude flags (unknown flags pass through)
+ccrouter code --log-level=debug --model claude-sonnet-4-6
+```
+
 **Examples:**
 ```bash
-# Use default or project config
+# Use default or project config (auto permissions)
 ccrouter code
 
 # Use specific config file
@@ -52,6 +74,12 @@ ccrouter code -p 9090
 
 # Enable debug logging to file
 ccrouter code --log-level=debug --log-destination=file
+
+# Use conservative (default) permissions
+ccrouter code --conservative
+
+# Pass a specific model to Claude Code
+ccrouter code -- --model claude-opus-4-6
 ```
 
 ---

@@ -4,24 +4,27 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/iimmutable/cc-modelrouter)](https://goreportcard.com/report/github.com/iimmutable/cc-modelrouter)
 [![CI](https://github.com/iimmutable/cc-modelrouter/actions/workflows/ci.yml/badge.svg)](https://github.com/iimmutable/cc-modelrouter/actions/workflows/ci.yml)
 
+**A local API gateway for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that routes requests to any LLM provider — GLM, GPT, Claude, Gemini, Kimi, Qwen, and more.**
+
+> Also known as: **claude-code-router** | **ccr** | **ccrouter** | **claude code api gateway** | **claude code proxy** | **claude code model router**
+
 Code with any frontier LLM from Claude Code — no vendor lock-in, no format headaches.
-
-#ClaudeCode #LLMRouter #MultiProvider #cc #ccrouter #VibeCoding #AgenticCoding
-
-The vibe coding landscape moves fast. Last month's best model might not be this month's. cc-modelrouter gives you a single local proxy that auto-routes Claude Code requests to any provider — GLM, GPT, Claude, Gemini, Kimi, Qwen — handling every API format difference transparently.
 
 ```
 Claude Code  -->  ccrouter (localhost)  -->  Provider API
                    (auto-routes)              (GLM, GPT, Claude, Gemini, Kimi, Qwen)
 ```
 
+The vibe coding landscape moves fast. Last month's best model might not be this month's. cc-modelrouter gives you a single local proxy that auto-routes Claude Code requests to any provider, handling every API format difference transparently.
+
 ## Why cc-modelrouter?
 
 - **The best coding model changes weekly.** Last month it was Claude, this month it might be GLM-5.1 or Kimi K2.5. Hardcoding a single provider means reconfiguring every time the landscape shifts. cc-modelrouter routes to any provider through one stable config.
 - **Claude Code only speaks Anthropic API.** Every other provider speaks something different — OpenAI format, Gemini native, GLM's Anthropic-compatible dialect. cc-modelrouter handles the translation transparently.
 - **Smart routing, not just proxying.** Background agents get cheaper models; deep reasoning gets the heavy hitters. Routes are detected automatically from request characteristics — think level, modality, context size.
+- **Zero friction.** `ccrouter code` launches Claude Code with auto-accepted permissions. No extra flags needed.
 
-Runs locally on localhost. API keys never leave your machine. Admin API is token-authenticated.
+Runs locally on localhost. API keys never leave your machine. Admin API is token-authenticated. Single Go binary, no runtime dependencies.
 
 ## How Is This Different?
 
@@ -94,7 +97,16 @@ Or create `~/.cc-modelrouter/config.json` manually:
 ccrouter code
 ```
 
-This starts the router and launches Claude Code with the proxy auto-configured.
+This starts the router and launches Claude Code with:
+- Proxy auto-configured via `ANTHROPIC_BASE_URL`
+- `--permission-mode auto` (unrestricted) applied by default — no manual approval prompts
+- Pass any additional Claude Code flags after `--`:
+
+```bash
+ccrouter code -- --model claude-opus-4-6
+ccrouter code --conservative    # use default permissions instead
+ccrouter code -- --permission-mode default --model claude-sonnet-4-6
+```
 
 For standalone mode (use with any Anthropic-compatible client):
 
@@ -189,6 +201,8 @@ If OpenRouter is down, it seamlessly falls back to GLM, then Gemini. Max attempt
 ## Features
 
 - **Config Wizard** — full-screen interactive TUI for setup (`ccrouter config`)
+- **Auto Permissions** — `ccrouter code` defaults to `--permission-mode auto` for zero-friction launch
+- **Arg Passthrough** — pass any flags to Claude Code via `--` separator
 - **Request Compaction** — automatic request reduction for providers with context window limits
 - **Instance Isolation** — each `ccrouter code` gets its own port, PID, and log file
 - **Project Config** — per-project config completely overrides global settings
@@ -211,7 +225,7 @@ Real-time token usage dashboard. Track requests, tokens, and fallbacks by route 
 
 | Command | Description |
 |---------|-------------|
-| `ccrouter code` | Start router + launch Claude Code |
+| `ccrouter code` | Start router + launch Claude Code (auto permissions) |
 | `ccrouter start` | Start standalone router |
 | `ccrouter stop [id]` | Stop instance (all if no ID) |
 | `ccrouter status` | Show running instances |

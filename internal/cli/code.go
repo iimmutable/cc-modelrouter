@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -159,6 +160,17 @@ func runCode(cmd *cobra.Command, rawArgs []string) error {
 		claudeArgs = append(claudeArgs, arg)
 	}
 	// --- End manual flag parsing ---
+
+	// Default to --permission-mode auto unless user opted into --conservative
+	// or explicitly set --permission-mode themselves
+	hasConservative := slices.Contains(claudeArgs, "--conservative")
+	hasPermissionMode := slices.ContainsFunc(claudeArgs, func(arg string) bool {
+		return strings.HasPrefix(arg, "--permission-mode")
+	})
+
+	if !hasConservative && !hasPermissionMode {
+		claudeArgs = append([]string{"--permission-mode", "auto"}, claudeArgs...)
+	}
 
 	// Get working directory
 	projectRoot, err := os.Getwd()
